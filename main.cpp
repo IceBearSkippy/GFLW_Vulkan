@@ -11,6 +11,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <cstdlib> //EXIT_FAILURE/EXIT_SUCCESS macros
+#include <map>
 
 using namespace std;
 
@@ -73,6 +74,7 @@ private:
     void initVulkan() { 
         createInstance();
         setupDebugMessenger();
+        pickPhysicalDevice();
     }
     void createInstance() {
         if (enableValidationLayers && !checkValidationLayerSupport()) {
@@ -110,8 +112,6 @@ private:
             createInfo.pNext = nullptr;
         }
 
-
-        
         // the following are vk extensions
         //uint32_t extensionCount = 0;
         //vector<VkExtensionProperties> extensions(extensionCount);
@@ -124,8 +124,8 @@ private:
         if (vkCreateInstance(&createInfo, nullptr, &instance) != VK_SUCCESS) {
             throw runtime_error("failed to create instance!");
         }
-
     }
+
     vector<const char*> getRequiredExtensions() {
         //GLFW extensions!
         uint32_t glfwExtensionCount = 0;
@@ -196,6 +196,66 @@ private:
         createInfo.pfnUserCallback = debugCallback;
         createInfo.pUserData = nullptr; // Optional
     }
+
+    void pickPhysicalDevice() {
+        VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
+        uint32_t deviceCount = 0;
+        vkEnumeratePhysicalDevices(instance, &deviceCount, nullptr);
+        if (deviceCount == 0) {
+            throw runtime_error("Failed to find GPUs with Vulkan support");
+        }
+        vector<VkPhysicalDevice> devices(deviceCount);
+        vkEnumeratePhysicalDevices(instance, &deviceCount, devices.data());
+        
+        // Use an ordered map to automatically sort candidates by increasing score
+        multimap<int, VkPhysicalDevice> candidates;
+
+        for (const auto& device : devices) {
+            int score = rateDeviceSuitability(device);
+            candidates.insert(make_pair(score, device));
+        }
+        // check if the best candidate is suitable at all
+        if (candidates.rbegin()->first > 0) {
+            // rbegin is reversed
+            physicalDevice = candidates.rbegin()->second;
+        }else {
+            throw runtime_error("Failed to find a suitable GPU!");
+        }
+    }
+    
+    int rateDeviceSuitability(VkPhysicalDevice device) {
+        VkPhysicalDeviceProperties deviceProperties;
+        VkPhysicalDeviceFeatures deviceFeatures;
+        vkGetPhysicalDeviceProperties(device, &deviceProperties);
+        vkGetPhysicalDeviceFeatures(device, &deviceFeatures);
+
+        int score = 0;
+        // Discrete GPUs have a significant performance advantage
+        if (deviceProperties.deviceType ==
+            VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
+            score += 1000;
+            cout << "Discrete gpu found!" << endl;
+        }
+
+        // Maximum possible size of textures affects graphics quality
+        score += deviceProperties.limits.maxImageDimension2D;
+
+        // Application can't function without geometry shaders
+        if (!deviceFeatures.geometryShader) {
+            return 0;
+        }
+        return score;
+    }
+    bool isDeviceSuitable(VkPhysicalDevice device) {
+        VkPhysicalDeviceProperties deviceProperties;
+        VkPhysicalDeviceFeatures deviceFeatures;
+        vkGetPhysicalDeviceProperties(device, &deviceProperties);
+        vkGetPhysicalDeviceFeatures(device, &deviceFeatures);
+
+        return deviceProperties.deviceType ==
+            VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU && deviceFeatures.geometryShader;
+    }
+
     void mainLoop() {
         while(!glfwWindowShouldClose(window)) {
             glfwPollEvents();
