@@ -12,6 +12,7 @@
 #include <stdexcept>
 #include <cstdlib> //EXIT_FAILURE/EXIT_SUCCESS macros
 #include <map>
+#include <optional> //c++ 17 added optional
 
 using namespace std;
 
@@ -19,6 +20,43 @@ const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
 GLFWwindow* window;
 
+struct QueueFamilyIndices {
+    optional<uint32_t> graphicsFamily;
+
+    bool isComplete() {
+        return graphicsFamily.has_value();
+    }
+};
+
+// Queue families -- each family of queues supports a subset of commands
+QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device) {
+    QueueFamilyIndices indices;
+    // Assign index to queue families that could be found
+
+    uint32_t queueFamilyCount = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, nullptr);
+
+    vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
+    vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.data());
+
+    int i = 0;
+    for (const auto& queueFamily : queueFamilies) {
+        if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+            indices.graphicsFamily = i;
+        }
+        if (indices.isComplete()) {
+            break;
+        }
+        i++;
+    }
+
+    return indices;
+}
+
+bool isDeviceSuitible(VkPhysicalDevice device) {
+    QueueFamilyIndices indices = findQueueFamilies(device);
+    return indices.isComplete();
+}
 const vector<const char*> validationLayers = {
     "VK_LAYER_KHRONOS_validation"
 };
@@ -234,7 +272,6 @@ private:
         if (deviceProperties.deviceType ==
             VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
             score += 1000;
-            cout << "Discrete gpu found!" << endl;
         }
 
         // Maximum possible size of textures affects graphics quality
