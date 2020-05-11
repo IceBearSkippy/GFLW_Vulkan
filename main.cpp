@@ -9,6 +9,7 @@
 #include <vulkan/vulkan.h>
 #include <vector>
 #include <iostream>
+#include <fstream>
 #include <stdexcept>
 #include <cstdlib> //EXIT_FAILURE/EXIT_SUCCESS macros
 #include <cstdint> //Necessary for UINT32_MAX
@@ -53,6 +54,22 @@ const vector<const char*> validationLayers = {
 const vector<const char*> deviceExtensions = {
     VK_KHR_SWAPCHAIN_EXTENSION_NAME
 };
+
+static vector<char> readFile(const string& filename) {
+    ifstream file(filename, ios::ate | ios::binary); // reads from the end
+    if (!file.is_open()) {
+        throw runtime_error("Failed to open file!");
+    }
+    size_t fileSize = (size_t)file.tellg();
+    vector<char> buffer(fileSize); // allocates size based on end
+    file.seekg(0);
+    file.read(buffer.data(), fileSize);
+
+    file.close();
+    return buffer;
+}
+
+
 
 SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device) {
     SwapChainSupportDetails details;
@@ -125,6 +142,8 @@ bool checkDeviceExtensionSupport(VkPhysicalDevice device) {
     }
     return requiredExtensions.empty();
 }
+
+
 bool isDeviceSuitible(VkPhysicalDevice device) {
     QueueFamilyIndices indices = findQueueFamilies(device);
     bool extensionsSupported = checkDeviceExtensionSupport(device);
@@ -137,6 +156,8 @@ bool isDeviceSuitible(VkPhysicalDevice device) {
 
     return indices.isComplete() && extensionsSupported && swapChainAdequate;
 }
+
+
 VkSurfaceFormatKHR chooseSwapSurfaceFormat(const vector<VkSurfaceFormatKHR>& availableFormats) {
     for (const auto& availableFormat : availableFormats) {
         if (availableFormat.format == VK_FORMAT_B8G8R8A8_SRGB &&
@@ -148,6 +169,7 @@ VkSurfaceFormatKHR chooseSwapSurfaceFormat(const vector<VkSurfaceFormatKHR>& ava
     return availableFormats[0];
 }
 
+
 VkPresentModeKHR chooseSwapPresentMode(const vector<VkPresentModeKHR>& availablePresentModes) {
     for (const auto& availablePresentMode : availablePresentModes) {
         if (availablePresentMode == VK_PRESENT_MODE_MAILBOX_KHR) {
@@ -156,6 +178,7 @@ VkPresentModeKHR chooseSwapPresentMode(const vector<VkPresentModeKHR>& available
     }
     return VK_PRESENT_MODE_FIFO_KHR;
 }
+
 
 VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities) {
     if (capabilities.currentExtent.width != UINT32_MAX) {
@@ -173,8 +196,6 @@ VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities) {
         return actualExtent;
     }
 }
-
-
 
 
 VkResult CreateDebugUtilsMessengerEXT(VkInstance instance, const
@@ -237,6 +258,7 @@ private:
         createLogicalDevice();
         createSwapChain();
         createImageViews();
+        createGraphicsPipeline();
     }
     void createInstance() {
         if (enableValidationLayers && !checkValidationLayerSupport()) {
@@ -579,6 +601,112 @@ private:
         }
     }
 
+
+    void createGraphicsPipeline() {
+        //TODO: refactor to compile inline for .vert and .frag as initial setup?
+        auto vertShaderCode = readFile("shaders/vert.spv");
+        auto fragShaderCode = readFile("shaders/frag.spv");
+
+        VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
+        VkShaderModule fragShaderModule = createShaderModule(fragShaderCode);
+
+        VkPipelineShaderStageCreateInfo vertShaderStageInfo{};
+        vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
+
+        vertShaderStageInfo.module = vertShaderModule;
+        // use different entrypoints to combine multiple fragment shaders into one shader module
+        vertShaderStageInfo.pName = "main";
+
+        // pSpecializationInfo -- specify values for shader constants
+        vertShaderStageInfo.pSpecializationInfo = nullptr;
+
+        VkPipelineShaderStageCreateInfo fragShaderStageInfo{};
+        fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+        fragShaderStageInfo.module = fragShaderModule;
+        fragShaderStageInfo.pName = "main";
+        fragShaderStageInfo.pSpecializationInfo = nullptr;
+
+        VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
+
+
+        // create vertex input
+        VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
+        vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+        vertexInputInfo.vertexBindingDescriptionCount = 0;
+        // vertexBindingDescriptions point to an array of structs that describe loading vertex data
+        vertexInputInfo.pVertexBindingDescriptions = nullptr; // Optional 
+        vertexInputInfo.vertexAttributeDescriptionCount = 0;
+        // vertexAttributeDescriptions point to an array of structs that describe loading vertex data
+        vertexInputInfo.pVertexAttributeDescriptions = nullptr; // Optional
+
+        // create input assembly
+        VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+        inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+        inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        inputAssembly.primitiveRestartEnable = VK_FALSE;
+
+        //Viewports and scissors
+        VkViewport viewport{};
+        viewport.x = 0.0f;
+        viewport.y = 0.0f;
+        viewport.width = (float)swapChainExtent.width;
+        viewport.height = (float)swapChainExtent.height;
+        viewport.minDepth = 0.0f; // depth between [0..1]
+        viewport.maxDepth = 1.0f;
+
+        VkRect2D scissor{};
+        scissor.offset = {0, 0};
+        scissor.extent = swapChainExtent;
+
+        VkPipelineViewportStateCreateInfo viewportState{};
+        viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+        viewportState.viewportCount = 1;
+        viewportState.pViewports = &viewport;
+        viewportState.scissorCount = 1;
+        viewportState.pScissors = &scissor;
+
+        //Rasterizer
+        VkPipelineRasterizationStateCreateInfo rasterizer{};
+        rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+        // fragments that are beyond the near and far planes are clamped. Useful for creating shadow
+        // maps. Require enabling GPU feature
+        rasterizer.depthClampEnable = VK_FALSE;
+        
+        // Setting discard enable to true means geometry never passes 
+        // through rasterization stage
+        rasterizer.rasterizerDiscardEnable = VK_FALSE;
+
+        // polygonMode determines how fragments are generated for geometry
+        // MODE_FILL, MODE_LINE, MODE_POINT
+        // using anything aside fill requires a GPU feature
+        rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+
+        // thickness of line. Thicker than 1.0f requires wideLines GPU feature
+        rasterizer.lineWidth = 1.0f;
+        rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+        rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+        rasterizer.depthBiasEnable = VK_FALSE;
+        rasterizer.depthBiasConstantFactor = 0.0f; // optional
+        rasterizer.depthBiasClamp = 0.0f; // optional
+        rasterizer.depthBiasSlopeFactor = 0.0f; // optional
+
+        vkDestroyShaderModule(logicalDevice, vertShaderModule, nullptr);
+        vkDestroyShaderModule(logicalDevice, fragShaderModule, nullptr);
+    }
+
+    VkShaderModule createShaderModule(const vector<char>& code) {
+        VkShaderModuleCreateInfo createInfo{};
+        createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+        createInfo.codeSize = code.size();
+        createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
+        VkShaderModule shaderModule;
+        if (vkCreateShaderModule(logicalDevice, &createInfo, nullptr, &shaderModule) != VK_SUCCESS) {
+            throw runtime_error("Failed to create shader module!");
+        }
+        return shaderModule;
+    }
     void mainLoop() {
         while(!glfwWindowShouldClose(window)) {
             glfwPollEvents();
