@@ -221,6 +221,7 @@ private:
     vector<VkImage> swapChainImages; // implicitly cleaned up when swapChain is destroyed
     VkFormat swapChainImageFormat;
     VkExtent2D swapChainExtent;
+    vector<VkImageView> swapChainImageViews;
 
     void initWindow() {
         glfwInit();
@@ -235,6 +236,7 @@ private:
         pickPhysicalDevice();
         createLogicalDevice();
         createSwapChain();
+        createImageViews();
     }
     void createInstance() {
         if (enableValidationLayers && !checkValidationLayerSupport()) {
@@ -420,10 +422,10 @@ private:
         vector<VkDeviceQueueCreateInfo> queueCreateInfos;
 
         set<uint32_t> uniqueQueueFamilies =
-            { indices.graphicsFamily.value(), indices.presentFamily.value() };
+        { indices.graphicsFamily.value(), indices.presentFamily.value() };
         float queuePriority = 1.0f;
         for (uint32_t queueFamily : uniqueQueueFamilies) {
-            
+
             VkDeviceQueueCreateInfo queueCreateInfo{};
             queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
             queueCreateInfo.queueFamilyIndex = indices.graphicsFamily.value();
@@ -431,7 +433,7 @@ private:
             queueCreateInfo.pQueuePriorities = &queuePriority;
             queueCreateInfos.push_back(queueCreateInfo);
         }
-        
+
 
         //specify device features like geometry shaders. Right now we leave it be
         VkPhysicalDeviceFeatures deviceFeatures{};
@@ -447,7 +449,7 @@ private:
         // enable extensions - currently enable swap chain
         createInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
         createInfo.ppEnabledExtensionNames = deviceExtensions.data();
-        
+
         if (enableValidationLayers) {
             createInfo.enabledLayerCount =
                 static_cast<uint32_t>(validationLayers.size());
@@ -504,7 +506,8 @@ private:
             createInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
             createInfo.queueFamilyIndexCount = 2;
             createInfo.pQueueFamilyIndices = queueFamilyIndices;
-        } else {
+        }
+        else {
             // image is owned by one queue family at a time and ownership must be explicitly tranferred before
             // using it in another queue family. Offers best performance
             createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
@@ -542,6 +545,40 @@ private:
         swapChainExtent = extent;
     }
 
+    void createImageViews() {
+        //resize list to fit all image views we'll be creating
+        swapChainImageViews.resize(swapChainImages.size());
+
+        for (size_t i = 0; i < swapChainImages.size(); i++) {
+            VkImageViewCreateInfo createInfo{};
+            createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+            createInfo.image = swapChainImages[i];
+
+            // viewtype -- treat images as 1D, 2D, 3D Textures and cube maps
+            // format -- the swap chain image format
+            createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            createInfo.format = swapChainImageFormat;
+
+            // components -- change color channels around
+            createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+            createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+            createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+            createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+
+            // subresourceRange -- describes image purpose and which part should be accessed
+            // would specify mipmapping/layers here
+            createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            createInfo.subresourceRange.baseMipLevel = 0;
+            createInfo.subresourceRange.levelCount = 1;
+            createInfo.subresourceRange.baseArrayLayer = 0;
+            createInfo.subresourceRange.layerCount = 1;
+
+            if (vkCreateImageView(logicalDevice, &createInfo, nullptr, &swapChainImageViews[i]) != VK_SUCCESS) {
+                throw runtime_error("Failed to create image views!");
+            }
+        }
+    }
+
     void mainLoop() {
         while(!glfwWindowShouldClose(window)) {
             glfwPollEvents();
@@ -550,12 +587,15 @@ private:
     
     
     void cleanup() {
-        if (enableValidationLayers) {
-            DestroyDebugUtilsMessengerEXT(instance, debugMessenger, nullptr);
+        for (auto imageView : swapChainImageViews) {
+            vkDestroyImageView(logicalDevice, imageView, nullptr);
         }
         vkDestroySwapchainKHR(logicalDevice, swapChain, nullptr);
         vkDestroyDevice(logicalDevice, nullptr);
         vkDestroySurfaceKHR(instance, surface, nullptr);
+        if (enableValidationLayers) {
+            DestroyDebugUtilsMessengerEXT(instance, debugMessenger, nullptr);
+        }
         vkDestroyInstance(instance, nullptr);
         glfwDestroyWindow(window);
         glfwTerminate();
