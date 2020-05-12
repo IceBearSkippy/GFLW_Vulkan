@@ -70,7 +70,6 @@ static vector<char> readFile(const string& filename) {
 }
 
 
-
 SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device) {
     SwapChainSupportDetails details;
 
@@ -243,6 +242,7 @@ private:
     VkFormat swapChainImageFormat;
     VkExtent2D swapChainExtent;
     vector<VkImageView> swapChainImageViews;
+    VkPipelineLayout pipelineLayout;
 
     void initWindow() {
         glfwInit();
@@ -692,6 +692,69 @@ private:
         rasterizer.depthBiasClamp = 0.0f; // optional
         rasterizer.depthBiasSlopeFactor = 0.0f; // optional
 
+        // multisampling -- one of the ways to perform anti-aliasing
+        // enabling it requires enabling GPU feature
+        // CURRENT: we disable for now
+        VkPipelineMultisampleStateCreateInfo multisampling{};
+        multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+        multisampling.sampleShadingEnable = VK_FALSE;
+        multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+        multisampling.minSampleShading = 1.0f; // optional
+        multisampling.pSampleMask = nullptr; // optional
+        multisampling.alphaToCoverageEnable = VK_FALSE; // optional
+        multisampling.alphaToOneEnable = VK_FALSE; // optional
+
+        //VkPipelineDepthStencilStateCreateInfo -- only if you're using a depth/stencil buffer
+
+        // Color blending
+        // common way to use color blending is to implement alpha blending
+        // We are currently not blending.
+        VkPipelineColorBlendAttachmentState colorBlendAttachment{};
+        colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
+            VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT |
+            VK_COLOR_COMPONENT_A_BIT;
+        colorBlendAttachment.blendEnable = VK_FALSE; // VK_TRUE - alpha blending
+        colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE; // optional -- VK_BLEND_FACTOR_SRC_ALPHA - alpha blending
+        colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO; // optional -- VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA - alpha blending
+        colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD; // optional
+        colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE; // optional
+        colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO; // optional
+        colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD; // optional
+
+        VkPipelineColorBlendStateCreateInfo colorBlending{};
+        colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+        colorBlending.logicOpEnable = VK_FALSE;
+        colorBlending.logicOp = VK_LOGIC_OP_COPY; // optional
+        colorBlending.attachmentCount = 1;
+        colorBlending.pAttachments = &colorBlendAttachment;
+        colorBlending.blendConstants[0] = 0.0f; // optional
+        colorBlending.blendConstants[1] = 0.0f; // optional
+        colorBlending.blendConstants[2] = 0.0f; // optional
+        colorBlending.blendConstants[3] = 0.0f; // optional
+
+
+        // dynamic states
+        VkDynamicState dynamicStates[] = {
+            VK_DYNAMIC_STATE_VIEWPORT,
+            VK_DYNAMIC_STATE_LINE_WIDTH
+        };
+
+        VkPipelineDynamicStateCreateInfo dynamicState{};
+        dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+        dynamicState.dynamicStateCount = 2;
+        dynamicState.pDynamicStates = dynamicStates;
+        
+        // create pipelineLayout
+        VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
+        pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        pipelineLayoutInfo.setLayoutCount = 0; // optional
+        pipelineLayoutInfo.pSetLayouts = nullptr; // optional
+        pipelineLayoutInfo.pushConstantRangeCount = 0; // optional
+        pipelineLayoutInfo.pPushConstantRanges = nullptr;
+        if (vkCreatePipelineLayout(logicalDevice, &pipelineLayoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS) {
+            throw runtime_error("Failed to create pipeline layout!");
+        }
+
         vkDestroyShaderModule(logicalDevice, vertShaderModule, nullptr);
         vkDestroyShaderModule(logicalDevice, fragShaderModule, nullptr);
     }
@@ -715,6 +778,7 @@ private:
     
     
     void cleanup() {
+        vkDestroyPipelineLayout(logicalDevice, pipelineLayout, nullptr);
         for (auto imageView : swapChainImageViews) {
             vkDestroyImageView(logicalDevice, imageView, nullptr);
         }
