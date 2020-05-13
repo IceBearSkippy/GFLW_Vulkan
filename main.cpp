@@ -248,6 +248,9 @@ private:
     vector<VkFramebuffer> swapChainFramebuffers;
     VkCommandPool commandPool;
     vector<VkCommandBuffer> commandBuffers;
+    //semaphores
+    VkSemaphore imageAvailableSemaphore;
+    VkSemaphore renderFinishedSemaphore;
 
     void initWindow() {
         glfwInit();
@@ -268,7 +271,73 @@ private:
         createFramebuffers();
         createCommandPool();
         createCommandBuffers();
+        createSemaphores();
     }
+
+    void mainLoop() {
+        while (!glfwWindowShouldClose(window)) {
+            glfwPollEvents();
+            drawFrame();
+        }
+    }
+
+    void drawFrame() {
+        //Aquire image from swap chain
+        uint32_t imageIndex;
+        // imageAvailableSemaphore is to be signaled when presentation engine is
+        // finished using engine (VK_NULL_HANDLE could be fence)
+        vkAcquireNextImageKHR(logicalDevice, swapChain, UINT64_MAX,
+            imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
+
+        //Submitting the command buffer
+        VkSubmitInfo submitInfo{};
+        submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        //specify which semaphores to wait on and in which stage
+        // we want to wait with writing colors to the image until it's available,
+        // so we specify the stage of graphics pipeline that writes to color attachment
+        VkSemaphore waitSemaphores[] = { imageAvailableSemaphore };
+        VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
+        submitInfo.waitSemaphoreCount = 1;
+        submitInfo.pWaitSemaphores = waitSemaphores;
+        submitInfo.pWaitDstStageMask = waitStages;
+
+        //specify which command buffers to actually submit for execution
+        submitInfo.commandBufferCount = 1;
+        submitInfo.pCommandBuffers = &commandBuffers[imageIndex];
+
+        // specify which semaphore (renderFinishedSemaphore) to signal
+        // once the command buffer has finished executing 
+        VkSemaphore signalSemaphores[] = { renderFinishedSemaphore };
+        submitInfo.signalSemaphoreCount = 1;
+        submitInfo.pSignalSemaphores = signalSemaphores;
+
+        if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE) != VK_SUCCESS) {
+            throw runtime_error("Failed to submit draw command buffer!");
+        }
+
+        // Presentation
+        VkPresentInfoKHR presentInfo{};
+        presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+
+        // specify which semaphores to wait on before presentation can happen
+        presentInfo.waitSemaphoreCount = 1;
+        presentInfo.pWaitSemaphores = signalSemaphores;
+
+        // specify swap chains to present images to and the index
+        // of the image for each swap chain. This will always be 1
+        VkSwapchainKHR swapChains[] = { swapChain };
+        presentInfo.swapchainCount = 1;
+        presentInfo.pSwapchains = swapChains;
+        presentInfo.pImageIndices = &imageIndex;
+
+        // Specify an array of VkResult values to check for every
+        // individual swap chain.
+        presentInfo.pResults = nullptr; //optional
+
+        vkQueuePresentKHR(presentQueue, &presentInfo);
+    }
+
+
     void createInstance() {
         if (enableValidationLayers && !checkValidationLayerSupport()) {
             throw runtime_error("validation layers requested, but not available");
@@ -652,6 +721,21 @@ private:
         //subpass.pDepthStencilAttachment;
         //subpass.pPreserveAttachments;
 
+        // Subpass dependencies
+        // refer to before or after the render pass depending on whether
+        // it is specified in srcSubpass or dstSubpass
+        VkSubpassDependency dependency{};
+        dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+        dependency.dstSubpass = 0; // refers to our subpass (which is the first and only one)
+
+        //specify operations to wait on / stages in which these operations occur
+        dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dependency.srcAccessMask = 0;
+
+        // these settings will prevent the transitioning to happen unless it's actually neccessary
+        dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        
         // Render pass
         VkRenderPassCreateInfo renderPassInfo{};
         renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
@@ -659,10 +743,12 @@ private:
         renderPassInfo.pAttachments = &colorAttachment;
         renderPassInfo.subpassCount = 1;
         renderPassInfo.pSubpasses = &subpass;
+        renderPassInfo.pDependencies = &dependency;
 
         if (vkCreateRenderPass(logicalDevice, &renderPassInfo, nullptr, &renderPass) != VK_SUCCESS) {
             throw runtime_error("Failed to create render pass!");
         }
+
     }
 
     void createGraphicsPipeline() {
@@ -720,7 +806,7 @@ private:
         viewport.maxDepth = 1.0f;
 
         VkRect2D scissor{};
-        scissor.offset = {0, 0};
+        scissor.offset = { 0, 0 };
         scissor.extent = swapChainExtent;
 
         VkPipelineViewportStateCreateInfo viewportState{};
@@ -736,7 +822,7 @@ private:
         // fragments that are beyond the near and far planes are clamped. Useful for creating shadow
         // maps. Require enabling GPU feature
         rasterizer.depthClampEnable = VK_FALSE;
-        
+
         // Setting discard enable to true means geometry never passes 
         // through rasterization stage
         rasterizer.rasterizerDiscardEnable = VK_FALSE;
@@ -806,7 +892,7 @@ private:
         dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
         dynamicState.dynamicStateCount = 2;
         dynamicState.pDynamicStates = dynamicStates;
-        
+
         // create pipelineLayout
         VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
         pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -841,7 +927,7 @@ private:
         pipelineInfo.basePipelineIndex = -1; // optional
 
         if (vkCreateGraphicsPipelines(logicalDevice, VK_NULL_HANDLE, 1,
-                &pipelineInfo, nullptr, &graphicsPipeline) != VK_SUCCESS) {
+            &pipelineInfo, nullptr, &graphicsPipeline) != VK_SUCCESS) {
             throw runtime_error("Failed to create graphics pipeline!");
         }
 
@@ -860,12 +946,7 @@ private:
         }
         return shaderModule;
     }
-    void mainLoop() {
-        while(!glfwWindowShouldClose(window)) {
-            glfwPollEvents();
-        }
-    }
-    
+
     void createFramebuffers() {
         // need to create framebuffers for all vkimages in swap chains
         swapChainFramebuffers.resize(swapChainImageViews.size());
@@ -878,6 +959,7 @@ private:
 
             VkFramebufferCreateInfo framebufferInfo{};
             framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+            framebufferInfo.renderPass = renderPass;
             framebufferInfo.attachmentCount = 1;
             framebufferInfo.pAttachments = attachments;
             framebufferInfo.width = swapChainExtent.width;
@@ -889,7 +971,7 @@ private:
             }
         }
     }
-    
+
     void createCommandPool() {
         QueueFamilyIndices queueFamilyIndices = findQueueFamilies(physicalDevice);
 
@@ -970,7 +1052,7 @@ private:
 
             //Basic Drawing Commands
             vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
-            
+
             //draw the triangle
             // cmdbuffer, vertexCount, instanceCount, firstVertex, firstInstance
             vkCmdDraw(commandBuffers[i], 3, 1, 0, 0);
@@ -980,10 +1062,25 @@ private:
             }
         }
 
-        
+
+    }
+
+    void createSemaphores() {
+        VkSemaphoreCreateInfo semaphoreInfo{};
+        semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+
+        if (vkCreateSemaphore(logicalDevice, &semaphoreInfo, nullptr,
+            &imageAvailableSemaphore) != VK_SUCCESS ||
+            vkCreateSemaphore(logicalDevice, &semaphoreInfo, nullptr, 
+                &renderFinishedSemaphore) != VK_SUCCESS) {
+
+            throw runtime_error("Failed to create semaphores!");
+        }
     }
 
     void cleanup() {
+        vkDestroySemaphore(logicalDevice, renderFinishedSemaphore, nullptr);
+        vkDestroySemaphore(logicalDevice, imageAvailableSemaphore, nullptr);
         vkDestroyCommandPool(logicalDevice, commandPool, nullptr);
         for (auto framebuffer : swapChainFramebuffers) {
             vkDestroyFramebuffer(logicalDevice, framebuffer, nullptr);
