@@ -563,7 +563,9 @@ private:
         if (vkCreateDevice(physicalDevice, &createInfo, nullptr, &logicalDevice) != VK_SUCCESS) {
             throw runtime_error("Failed to create logical device");
         }
+        vkGetDeviceQueue(logicalDevice, indices.presentFamily.value(), 0, &graphicsQueue);
         vkGetDeviceQueue(logicalDevice, indices.presentFamily.value(), 0, &presentQueue);
+        
 
     }
 
