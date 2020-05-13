@@ -246,6 +246,8 @@ private:
     VkPipelineLayout pipelineLayout;
     VkPipeline graphicsPipeline;
     vector<VkFramebuffer> swapChainFramebuffers;
+    VkCommandPool commandPool;
+    vector<VkCommandBuffer> commandBuffers;
 
     void initWindow() {
         glfwInit();
@@ -264,6 +266,8 @@ private:
         createRenderPass();
         createGraphicsPipeline();
         createFramebuffers();
+        createCommandPool();
+        createCommandBuffers();
     }
     void createInstance() {
         if (enableValidationLayers && !checkValidationLayerSupport()) {
@@ -885,8 +889,102 @@ private:
             }
         }
     }
+    
+    void createCommandPool() {
+        QueueFamilyIndices queueFamilyIndices = findQueueFamilies(physicalDevice);
+
+        VkCommandPoolCreateInfo poolInfo{};
+        poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        poolInfo.queueFamilyIndex = queueFamilyIndices.graphicsFamily.value();
+        // there are two flags:
+        // VK_COMMAND_POOL_CREATE_TRANSIENT_BIT - command buffers are rerecorded with new commands ofter (memory allocation behavior may change)
+        // VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT - command buffers to be rerecorded individually, without this flag, they all have to be reset together
+        poolInfo.flags = 0; // optional - we're currently not using either
+        if (vkCreateCommandPool(logicalDevice, &poolInfo, nullptr, &commandPool) != VK_SUCCESS) {
+            throw runtime_error("Failed to create command pool!");
+        }
+
+    }
+
+    void createCommandBuffers() {
+        commandBuffers.resize(swapChainFramebuffers.size());
+
+        VkCommandBufferAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        allocInfo.commandPool = commandPool;
+        // levels can be primary or secondary
+        // primary - can be submitted to a queue for execution, but not called by other command buffers
+        // secondary - cannot be submitted directly, but can be called from primary command buffers 
+        //             (useful for common operations from primary command buffers)
+        allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        allocInfo.commandBufferCount = (uint32_t)commandBuffers.size();
+
+        if (vkAllocateCommandBuffers(logicalDevice, &allocInfo, commandBuffers.data()) != VK_SUCCESS) {
+            throw runtime_error("Failed to allocate command buffers!");
+        }
+
+        // Command Buffer Recording
+        for (size_t i = 0; i < commandBuffers.size(); i++) {
+            VkCommandBufferBeginInfo beginInfo{};
+            beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+            //flags specify how we're gonna use the command buffer
+            // VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT - Command buffer will be rerecorded after executing once
+            // VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT - this is a secondary command buffer
+            //                                                    that will be entirely within a single render pass
+            // VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT - Command buffer can be resubmitted while it
+            //                                                is also already pending execution
+            beginInfo.flags = 0; // optional
+
+            // pInheritenceInfo only relevant for secondary command buffers
+            // specifies which state to inherit from the calling primary command buffer
+            beginInfo.pInheritanceInfo = nullptr; // optional
+
+            if (vkBeginCommandBuffer(commandBuffers[i], &beginInfo) != VK_SUCCESS) {
+                throw runtime_error("Failed to begin recording command buffer!");
+            }
+
+            // Render Pass
+            VkRenderPassBeginInfo renderPassInfo{};
+            renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+            renderPassInfo.renderPass = renderPass;
+            renderPassInfo.framebuffer = swapChainFramebuffers[i];
+
+            // size of render area. Where shader loads and stores will take place
+            // should match the size of attachments for best performance
+            renderPassInfo.renderArea.offset = { 0, 0 };
+            renderPassInfo.renderArea.extent = swapChainExtent;
+
+            // define clear values for VK_ATTACHMENT_LOAD_OP_CLEAR
+            // we use black with 100% opacity
+            VkClearValue clearColor = { 0.0f, 0.0f, 0.0f, 1.0f };
+            renderPassInfo.clearValueCount = 1;
+            renderPassInfo.pClearValues = &clearColor;
+
+            // final parameter controls how the drawing commands within the render
+            // pass will be provided:
+            // VK_SUBPASS_CONTENTS_INLINE: render pass commands will be embedded in primary cmd
+            //                             buffer and no secondary cmd buffers will be executed
+            // VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS: render pass cmds will be executed
+            //                                                from secondary command buffers
+            vkCmdBeginRenderPass(commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+            //Basic Drawing Commands
+            vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+            
+            //draw the triangle
+            // cmdbuffer, vertexCount, instanceCount, firstVertex, firstInstance
+            vkCmdDraw(commandBuffers[i], 3, 1, 0, 0);
+            vkCmdEndRenderPass(commandBuffers[i]);
+            if (vkEndCommandBuffer(commandBuffers[i]) != VK_SUCCESS) {
+                throw runtime_error("Failed to record command buffer!");
+            }
+        }
+
+        
+    }
 
     void cleanup() {
+        vkDestroyCommandPool(logicalDevice, commandPool, nullptr);
         for (auto framebuffer : swapChainFramebuffers) {
             vkDestroyFramebuffer(logicalDevice, framebuffer, nullptr);
         }
