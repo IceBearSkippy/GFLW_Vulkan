@@ -25,6 +25,10 @@ const uint32_t HEIGHT = 600;
 GLFWwindow* window;
 VkSurfaceKHR surface;
 
+//defines how many frames to be processed concurrently
+//note: each frame should have its own set of semaphores
+const int MAX_FRAMES_IN_FLIGHT = 2;
+
 #ifdef NDEBUG
 const bool enableValidationLayers = false;
 #else
@@ -249,8 +253,9 @@ private:
     VkCommandPool commandPool;
     vector<VkCommandBuffer> commandBuffers;
     //semaphores
-    VkSemaphore imageAvailableSemaphore;
-    VkSemaphore renderFinishedSemaphore;
+    vector<VkSemaphore> imageAvailableSemaphores;
+    vector<VkSemaphore> renderFinishedSemaphores;
+    size_t currentFrame = 0;
 
     void initWindow() {
         glfwInit();
@@ -279,6 +284,8 @@ private:
             glfwPollEvents();
             drawFrame();
         }
+
+        vkDeviceWaitIdle(logicalDevice);
     }
 
     void drawFrame() {
@@ -287,7 +294,7 @@ private:
         // imageAvailableSemaphore is to be signaled when presentation engine is
         // finished using engine (VK_NULL_HANDLE could be fence)
         vkAcquireNextImageKHR(logicalDevice, swapChain, UINT64_MAX,
-            imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
+            imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
 
         //Submitting the command buffer
         VkSubmitInfo submitInfo{};
@@ -295,7 +302,7 @@ private:
         //specify which semaphores to wait on and in which stage
         // we want to wait with writing colors to the image until it's available,
         // so we specify the stage of graphics pipeline that writes to color attachment
-        VkSemaphore waitSemaphores[] = { imageAvailableSemaphore };
+        VkSemaphore waitSemaphores[] = { imageAvailableSemaphores[currentFrame] };
         VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
         submitInfo.waitSemaphoreCount = 1;
         submitInfo.pWaitSemaphores = waitSemaphores;
@@ -307,7 +314,7 @@ private:
 
         // specify which semaphore (renderFinishedSemaphore) to signal
         // once the command buffer has finished executing 
-        VkSemaphore signalSemaphores[] = { renderFinishedSemaphore };
+        VkSemaphore signalSemaphores[] = { renderFinishedSemaphores[currentFrame] };
         submitInfo.signalSemaphoreCount = 1;
         submitInfo.pSignalSemaphores = signalSemaphores;
 
@@ -335,6 +342,11 @@ private:
         presentInfo.pResults = nullptr; //optional
 
         vkQueuePresentKHR(presentQueue, &presentInfo);
+
+        //checking if submission is finished
+        vkQueueWaitIdle(presentQueue);
+
+        currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
     }
 
 
@@ -1068,21 +1080,29 @@ private:
     }
 
     void createSemaphores() {
+        imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
+        renderFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
+
         VkSemaphoreCreateInfo semaphoreInfo{};
         semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
 
-        if (vkCreateSemaphore(logicalDevice, &semaphoreInfo, nullptr,
-            &imageAvailableSemaphore) != VK_SUCCESS ||
-            vkCreateSemaphore(logicalDevice, &semaphoreInfo, nullptr, 
-                &renderFinishedSemaphore) != VK_SUCCESS) {
+        for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+            if (vkCreateSemaphore(logicalDevice, &semaphoreInfo, nullptr,
+                &imageAvailableSemaphores[i]) != VK_SUCCESS ||
+                vkCreateSemaphore(logicalDevice, &semaphoreInfo, nullptr,
+                    &renderFinishedSemaphores[i]) != VK_SUCCESS) {
 
-            throw runtime_error("Failed to create semaphores!");
+                throw runtime_error("Failed to create semaphores for a frame!");
+            }
         }
+        
     }
 
     void cleanup() {
-        vkDestroySemaphore(logicalDevice, renderFinishedSemaphore, nullptr);
-        vkDestroySemaphore(logicalDevice, imageAvailableSemaphore, nullptr);
+        for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+            vkDestroySemaphore(logicalDevice, renderFinishedSemaphores[i], nullptr);
+            vkDestroySemaphore(logicalDevice, imageAvailableSemaphores[i], nullptr);
+        }
         vkDestroyCommandPool(logicalDevice, commandPool, nullptr);
         for (auto framebuffer : swapChainFramebuffers) {
             vkDestroyFramebuffer(logicalDevice, framebuffer, nullptr);
