@@ -255,6 +255,8 @@ private:
     //semaphores
     vector<VkSemaphore> imageAvailableSemaphores;
     vector<VkSemaphore> renderFinishedSemaphores;
+    vector<VkFence> inFlightFences;
+    vector<VkFence> imagesInFlight;
     size_t currentFrame = 0;
 
     void initWindow() {
@@ -276,7 +278,7 @@ private:
         createFramebuffers();
         createCommandPool();
         createCommandBuffers();
-        createSemaphores();
+        createSyncObjects();
     }
 
     void mainLoop() {
@@ -289,12 +291,22 @@ private:
     }
 
     void drawFrame() {
+        //wait for the frame to be finished
+        vkWaitForFences(logicalDevice, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
+
         //Aquire image from swap chain
         uint32_t imageIndex;
         // imageAvailableSemaphore is to be signaled when presentation engine is
         // finished using engine (VK_NULL_HANDLE could be fence)
         vkAcquireNextImageKHR(logicalDevice, swapChain, UINT64_MAX,
             imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
+
+        // Check if a previous frame is using this image (ie theres a fence to wait on)
+        if (imagesInFlight[imageIndex] != VK_NULL_HANDLE) {
+            vkWaitForFences(logicalDevice, 1, &imagesInFlight[imageIndex], VK_TRUE, UINT64_MAX);
+        }
+        // Mark the image as now being in use by this frame
+        imagesInFlight[imageIndex] = inFlightFences[currentFrame];
 
         //Submitting the command buffer
         VkSubmitInfo submitInfo{};
@@ -318,7 +330,9 @@ private:
         submitInfo.signalSemaphoreCount = 1;
         submitInfo.pSignalSemaphores = signalSemaphores;
 
-        if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE) != VK_SUCCESS) {
+        // reset fence before using it
+        vkResetFences(logicalDevice, 1, &inFlightFences[currentFrame]);
+        if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame]) != VK_SUCCESS) {
             throw runtime_error("Failed to submit draw command buffer!");
         }
 
@@ -1079,30 +1093,41 @@ private:
 
     }
 
-    void createSemaphores() {
+    void createSyncObjects() {
         imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
         renderFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
+        inFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
+        imagesInFlight.resize(swapChainImages.size(), VK_NULL_HANDLE);
 
         VkSemaphoreCreateInfo semaphoreInfo{};
         semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+
+        VkFenceCreateInfo fenceInfo{};
+        fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
             if (vkCreateSemaphore(logicalDevice, &semaphoreInfo, nullptr,
                 &imageAvailableSemaphores[i]) != VK_SUCCESS ||
                 vkCreateSemaphore(logicalDevice, &semaphoreInfo, nullptr,
-                    &renderFinishedSemaphores[i]) != VK_SUCCESS) {
+                    &renderFinishedSemaphores[i]) != VK_SUCCESS ||
+                vkCreateFence(logicalDevice, &fenceInfo, nullptr,
+                    &inFlightFences[i]) != VK_SUCCESS) {
 
-                throw runtime_error("Failed to create semaphores for a frame!");
+                throw runtime_error("Failed to create synchronization objects for a frame!");
             }
         }
         
     }
 
     void cleanup() {
+        
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
             vkDestroySemaphore(logicalDevice, renderFinishedSemaphores[i], nullptr);
             vkDestroySemaphore(logicalDevice, imageAvailableSemaphores[i], nullptr);
+            vkDestroyFence(logicalDevice, inFlightFences[i], nullptr);
         }
+
         vkDestroyCommandPool(logicalDevice, commandPool, nullptr);
         for (auto framebuffer : swapChainFramebuffers) {
             vkDestroyFramebuffer(logicalDevice, framebuffer, nullptr);
