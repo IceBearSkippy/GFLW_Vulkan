@@ -9,14 +9,14 @@
 #include <vulkan/vulkan.h>
 #include <vector>
 #include <iostream>
-#include <fstream>
 #include <stdexcept>
 #include <cstdlib> //EXIT_FAILURE/EXIT_SUCCESS macros
 #include <cstdint> //Necessary for UINT32_MAX
 #include <map>
-#include <set>
 #include <optional> //c++ 17 added optional
 #include <algorithm> 
+
+#include "Utils.h"
 
 using namespace std;
 
@@ -35,196 +35,6 @@ const bool enableValidationLayers = false;
 const bool enableValidationLayers = true;
 #endif
 
-struct QueueFamilyIndices {
-    optional<uint32_t> graphicsFamily;
-    optional<uint32_t> presentFamily;
-
-    bool isComplete() {
-        return graphicsFamily.has_value() &&
-            presentFamily.has_value();
-    }
-};
-
-struct SwapChainSupportDetails {
-    VkSurfaceCapabilitiesKHR capabilities;
-    vector<VkSurfaceFormatKHR> formats;
-    vector<VkPresentModeKHR> presentModes;
-};
-
-const vector<const char*> validationLayers = {
-    "VK_LAYER_KHRONOS_validation"
-};
-
-const vector<const char*> deviceExtensions = {
-    VK_KHR_SWAPCHAIN_EXTENSION_NAME
-};
-
-static vector<char> readFile(const string& filename) {
-    ifstream file(filename, ios::ate | ios::binary); // reads from the end
-    if (!file.is_open()) {
-        throw runtime_error("Failed to open file!");
-    }
-    size_t fileSize = (size_t)file.tellg();
-    vector<char> buffer(fileSize); // allocates size based on end
-    file.seekg(0);
-    file.read(buffer.data(), fileSize);
-
-    file.close();
-    return buffer;
-}
-
-
-SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device) {
-    SwapChainSupportDetails details;
-
-    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface, &details.capabilities);
-
-    uint32_t formatCount;
-    vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &formatCount, nullptr);
-    if (formatCount != 0) {
-        details.formats.resize(formatCount);
-        vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &formatCount, details.formats.data());
-    }
-
-    uint32_t presentModeCount;
-    vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount, nullptr);
-
-    if (presentModeCount != 0) {
-        details.presentModes.resize(presentModeCount);
-        vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount, details.presentModes.data());
-    }
-
-    return details;
-}
-
-// Queue families -- each family of queues supports a subset of commands
-QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device) {
-    QueueFamilyIndices indices;
-    // Assign index to queue families that could be found
-
-    uint32_t queueFamilyCount = 0;
-    vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, nullptr);
-
-    vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
-    vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.data());
-
-    int i = 0;
-    for (const auto& queueFamily : queueFamilies) {
-        if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
-            indices.graphicsFamily = i;
-        }
-
-        VkBool32 presentSupport = false;
-        vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface, &presentSupport);
-        if (presentSupport) {
-            indices.presentFamily = i;
-        }
-
-        if (indices.isComplete()) {
-            break;
-        }
-        i++;
-    }
-
-    return indices;
-}
-
-
-
-bool checkDeviceExtensionSupport(VkPhysicalDevice device) {
-    uint32_t extensionCount;
-    vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, nullptr);
-
-    vector<VkExtensionProperties> availableExtensions(extensionCount);
-    vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, availableExtensions.data());
-
-    set<string> requiredExtensions(deviceExtensions.begin(), deviceExtensions.end());
-
-    for (const auto& extension : availableExtensions) {
-        requiredExtensions.erase(extension.extensionName);
-    }
-    return requiredExtensions.empty();
-}
-
-
-bool isDeviceSuitible(VkPhysicalDevice device) {
-    QueueFamilyIndices indices = findQueueFamilies(device);
-    bool extensionsSupported = checkDeviceExtensionSupport(device);
-    bool swapChainAdequate = false;
-    if (extensionsSupported) {
-        // even if swapchain is adequate, need to find right settings for swap chain
-        SwapChainSupportDetails swapChainSupport = querySwapChainSupport(device);
-        swapChainAdequate = !swapChainSupport.formats.empty() && !swapChainSupport.presentModes.empty();
-    }
-
-    return indices.isComplete() && extensionsSupported && swapChainAdequate;
-}
-
-
-VkSurfaceFormatKHR chooseSwapSurfaceFormat(const vector<VkSurfaceFormatKHR>& availableFormats) {
-    for (const auto& availableFormat : availableFormats) {
-        if (availableFormat.format == VK_FORMAT_B8G8R8A8_SRGB &&
-            availableFormat.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
-            return availableFormat;
-        }
-    }
-    //settle for the first format found
-    return availableFormats[0];
-}
-
-
-VkPresentModeKHR chooseSwapPresentMode(const vector<VkPresentModeKHR>& availablePresentModes) {
-    for (const auto& availablePresentMode : availablePresentModes) {
-        if (availablePresentMode == VK_PRESENT_MODE_MAILBOX_KHR) {
-            return availablePresentMode;
-        }
-    }
-    return VK_PRESENT_MODE_FIFO_KHR;
-}
-
-
-VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities) {
-    if (capabilities.currentExtent.width != UINT32_MAX) {
-        return capabilities.currentExtent;
-    } else {
-        VkExtent2D actualExtent = { WIDTH, HEIGHT };
-        actualExtent.width =
-            max(capabilities.minImageExtent.width,
-                min(capabilities.maxImageExtent.width,
-                    actualExtent.width));
-        actualExtent.height =
-            max(capabilities.minImageExtent.height,
-                min(capabilities.maxImageExtent.height,
-                    actualExtent.height));
-        return actualExtent;
-    }
-}
-
-
-VkResult CreateDebugUtilsMessengerEXT(VkInstance instance, const
-    VkDebugUtilsMessengerCreateInfoEXT* pCreateInfo, const
-    VkAllocationCallbacks* pAllocator, VkDebugUtilsMessengerEXT*
-    pDebugMessenger) {
-    auto func = (PFN_vkCreateDebugUtilsMessengerEXT)
-        vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT");
-    if (func != nullptr) {
-        return func(instance, pCreateInfo, pAllocator,
-            pDebugMessenger);
-    }
-    else {
-        return VK_ERROR_EXTENSION_NOT_PRESENT;
-    }
-}
-
-void DestroyDebugUtilsMessengerEXT(VkInstance instance,
-    VkDebugUtilsMessengerEXT debugMessenger, const
-    VkAllocationCallbacks* pAllocator) {
-    auto func = (PFN_vkDestroyDebugUtilsMessengerEXT)
-        vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT");
-    if (func != nullptr) {
-        func(instance, debugMessenger, pAllocator);
-    }
-}
 
 class HelloTriangleApplication {
 public:
@@ -457,7 +267,7 @@ private:
         VkDebugUtilsMessengerCreateInfoEXT debugMessCreateInfo;
         populateDebugMessengerCreateInfo(debugMessCreateInfo);
 
-        if (CreateDebugUtilsMessengerEXT(instance, &debugMessCreateInfo, nullptr, &debugMessenger) != VK_SUCCESS) {
+        if (Utils::CreateDebugUtilsMessengerEXT(instance, &debugMessCreateInfo, nullptr, &debugMessenger) != VK_SUCCESS) {
             throw runtime_error("failed to setup debug messenger!");
         }
     }
@@ -527,23 +337,8 @@ private:
     }
 
 
-    bool isDeviceSuitable(VkPhysicalDevice device) {
-        QueueFamilyIndices indices = findQueueFamilies(device);
-        bool extensionsSupported = checkDeviceExtensionSupport(device);
-        return indices.isComplete() && extensionsSupported;
-
-
-        //VkPhysicalDeviceProperties deviceProperties;
-        //VkPhysicalDeviceFeatures deviceFeatures;
-        //vkGetPhysicalDeviceProperties(device, &deviceProperties);
-        //vkGetPhysicalDeviceFeatures(device, &deviceFeatures);
-
-        //return deviceProperties.deviceType ==
-        //    VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU && deviceFeatures.geometryShader;
-    }
-
     void createLogicalDevice() {
-        QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
+        QueueFamilyIndices indices = Utils::findQueueFamilies(physicalDevice, surface);
 
         vector<VkDeviceQueueCreateInfo> queueCreateInfos;
 
@@ -602,10 +397,10 @@ private:
     }
 
     void createSwapChain() {
-        SwapChainSupportDetails swapChainSupport = querySwapChainSupport(physicalDevice);
-        VkSurfaceFormatKHR surfaceFormat = chooseSwapSurfaceFormat(swapChainSupport.formats);
-        VkPresentModeKHR presentMode = chooseSwapPresentMode(swapChainSupport.presentModes);
-        VkExtent2D extent = chooseSwapExtent(swapChainSupport.capabilities);
+        SwapChainSupportDetails swapChainSupport = Utils::querySwapChainSupport(physicalDevice, surface);
+        VkSurfaceFormatKHR surfaceFormat = Utils::chooseSwapSurfaceFormat(swapChainSupport.formats);
+        VkPresentModeKHR presentMode = Utils::chooseSwapPresentMode(swapChainSupport.presentModes);
+        VkExtent2D extent = Utils::chooseSwapExtent(swapChainSupport.capabilities, WIDTH, HEIGHT);
 
         uint32_t imageCount = swapChainSupport.capabilities.minImageCount + 1;
 
@@ -626,7 +421,7 @@ private:
         createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT; // Specifies kind of operations we'll use the images in the swap chain for
         // Could change image usage to perform operations like post-processing (VK_IMAGE_USAGE_TRANSFER_DST_BIT)
 
-        QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
+        QueueFamilyIndices indices = Utils::findQueueFamilies(physicalDevice, surface);
         uint32_t queueFamilyIndices[] = { indices.graphicsFamily.value(), indices.presentFamily.value() };
 
         if (indices.graphicsFamily != indices.presentFamily) {
@@ -781,8 +576,8 @@ private:
 
     void createGraphicsPipeline() {
         //TODO: refactor to compile inline for .vert and .frag as initial setup?
-        auto vertShaderCode = readFile("shaders/vert.spv");
-        auto fragShaderCode = readFile("shaders/frag.spv");
+        auto vertShaderCode = Utils::readFile("shaders/vert.spv");
+        auto fragShaderCode = Utils::readFile("shaders/frag.spv");
 
         VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
         VkShaderModule fragShaderModule = createShaderModule(fragShaderCode);
@@ -1001,7 +796,7 @@ private:
     }
 
     void createCommandPool() {
-        QueueFamilyIndices queueFamilyIndices = findQueueFamilies(physicalDevice);
+        QueueFamilyIndices queueFamilyIndices = Utils::findQueueFamilies(physicalDevice, surface);
 
         VkCommandPoolCreateInfo poolInfo{};
         poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
@@ -1142,7 +937,7 @@ private:
         vkDestroyDevice(logicalDevice, nullptr);
         vkDestroySurfaceKHR(instance, surface, nullptr);
         if (enableValidationLayers) {
-            DestroyDebugUtilsMessengerEXT(instance, debugMessenger, nullptr);
+            Utils::DestroyDebugUtilsMessengerEXT(instance, debugMessenger, nullptr);
         }
         vkDestroyInstance(instance, nullptr);
         glfwDestroyWindow(window);
