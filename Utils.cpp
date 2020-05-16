@@ -130,12 +130,14 @@ namespace Utils {
     }
 
 
-    VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities, uint32_t WIDTH, uint32_t HEIGHT) {
+    VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities, GLFWwindow* window) {
         if (capabilities.currentExtent.width != UINT32_MAX) {
             return capabilities.currentExtent;
-        }
-        else {
-            VkExtent2D actualExtent = { WIDTH, HEIGHT };
+        } else {
+            int width, height;
+            glfwGetFramebufferSize(window, &width, &height);
+
+            VkExtent2D actualExtent = { width, height };
             actualExtent.width =
                 max(capabilities.minImageExtent.width,
                     min(capabilities.maxImageExtent.width,

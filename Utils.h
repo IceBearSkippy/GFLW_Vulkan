@@ -10,7 +10,6 @@
 #include <set>
 #include <optional>
 #include <algorithm>
-
 using namespace std;
 
 const vector<const char*> validationLayers = {
@@ -41,7 +40,7 @@ namespace Utils {
     bool isDeviceSuitible(VkPhysicalDevice device, VkSurfaceKHR& surface);
     VkSurfaceFormatKHR chooseSwapSurfaceFormat(const vector<VkSurfaceFormatKHR>& availableFormats);
     VkPresentModeKHR chooseSwapPresentMode(const vector<VkPresentModeKHR>& availablePresentModes);
-    VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities, uint32_t WIDTH, uint32_t HEIGHT);
+    VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities, GLFWwindow* window);
     VkResult CreateDebugUtilsMessengerEXT(VkInstance instance, const
         VkDebugUtilsMessengerCreateInfoEXT* pCreateInfo, const
         VkAllocationCallbacks* pAllocator, VkDebugUtilsMessengerEXT*
