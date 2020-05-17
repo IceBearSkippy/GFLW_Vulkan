@@ -69,11 +69,21 @@ private:
     vector<VkFence> imagesInFlight;
     size_t currentFrame = 0;
 
+    //handle resizing
+    bool framebufferResized = false;
+
     void initWindow() {
         glfwInit();
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-        glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+        
         window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan", nullptr, nullptr);
+        glfwSetWindowUserPointer(window, this);
+        glfwSetFramebufferSizeCallback(window, framebufferResizeCallback);
+    }
+
+    static void framebufferResizeCallback(GLFWwindow* window, int width, int height) {
+        auto app = reinterpret_cast<HelloTriangleApplication*>(glfwGetWindowUserPointer(window));
+        app->framebufferResized = true;
     }
     void initVulkan() {
         createInstance();
@@ -89,6 +99,27 @@ private:
         createCommandPool();
         createCommandBuffers();
         createSyncObjects();
+    }
+
+    void recreateSwapChain() {
+        int width = 0, height = 0;
+        glfwGetFramebufferSize(window, &width, &height);
+        while (width == 0 || height == 0) {
+            // minimize makes framebuffer size = 0
+            // we wait until window is maximized to proceed
+            glfwGetFramebufferSize(window, &width, &height);
+            glfwWaitEvents();
+        }
+        vkDeviceWaitIdle(logicalDevice);
+
+        cleanupSwapChain();
+
+        createSwapChain();
+        createImageViews();
+        createRenderPass();
+        createGraphicsPipeline();
+        createFramebuffers();
+        createCommandBuffers();
     }
 
     void mainLoop() {
@@ -165,10 +196,15 @@ private:
         // individual swap chain.
         presentInfo.pResults = nullptr; //optional
 
-        vkQueuePresentKHR(presentQueue, &presentInfo);
+        VkResult result = vkQueuePresentKHR(presentQueue, &presentInfo);
 
-        //checking if submission is finished
-        vkQueueWaitIdle(presentQueue);
+        // gives condition if presentation queue is optimal/suboptimal
+        if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
+            framebufferResized = false;
+            recreateSwapChain();
+        } else if (result != VK_SUCCESS) {
+            throw runtime_error("Failed to present swap chain image!");
+        }
 
         currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
     }
@@ -355,7 +391,6 @@ private:
             queueCreateInfos.push_back(queueCreateInfo);
         }
 
-
         //specify device features like geometry shaders. Right now we leave it be
         VkPhysicalDeviceFeatures deviceFeatures{};
 
@@ -375,8 +410,7 @@ private:
             createInfo.enabledLayerCount =
                 static_cast<uint32_t>(validationLayers.size());
             createInfo.ppEnabledLayerNames = validationLayers.data();
-        }
-        else {
+        } else {
             createInfo.enabledLayerCount = 0;
         }
 
@@ -386,8 +420,6 @@ private:
         }
         vkGetDeviceQueue(logicalDevice, indices.presentFamily.value(), 0, &graphicsQueue);
         vkGetDeviceQueue(logicalDevice, indices.presentFamily.value(), 0, &presentQueue);
-        
-
     }
 
     void createSurface() {
@@ -400,7 +432,7 @@ private:
         SwapChainSupportDetails swapChainSupport = Utils::querySwapChainSupport(physicalDevice, surface);
         VkSurfaceFormatKHR surfaceFormat = Utils::chooseSwapSurfaceFormat(swapChainSupport.formats);
         VkPresentModeKHR presentMode = Utils::chooseSwapPresentMode(swapChainSupport.presentModes);
-        VkExtent2D extent = Utils::chooseSwapExtent(swapChainSupport.capabilities, WIDTH, HEIGHT);
+        VkExtent2D extent = Utils::chooseSwapExtent(swapChainSupport.capabilities, window);
 
         uint32_t imageCount = swapChainSupport.capabilities.minImageCount + 1;
 
@@ -429,8 +461,7 @@ private:
             createInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
             createInfo.queueFamilyIndexCount = 2;
             createInfo.pQueueFamilyIndices = queueFamilyIndices;
-        }
-        else {
+        } else {
             // image is owned by one queue family at a time and ownership must be explicitly tranferred before
             // using it in another queue family. Offers best performance
             createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
@@ -915,8 +946,24 @@ private:
         
     }
 
+    void cleanupSwapChain() {
+        for (size_t i = 0; i < swapChainFramebuffers.size(); i++) {
+            vkDestroyFramebuffer(logicalDevice, swapChainFramebuffers[i], nullptr);
+        }
+
+        vkFreeCommandBuffers(logicalDevice, commandPool, static_cast<uint32_t>(commandBuffers.size()),
+            commandBuffers.data());
+        vkDestroyPipeline(logicalDevice, graphicsPipeline, nullptr);
+        vkDestroyPipelineLayout(logicalDevice, pipelineLayout, nullptr);
+        vkDestroyRenderPass(logicalDevice, renderPass, nullptr);
+        for (size_t i = 0; i < swapChainImageViews.size(); i++) {
+            vkDestroyImageView(logicalDevice, swapChainImageViews[i], nullptr);
+        }
+        vkDestroySwapchainKHR(logicalDevice, swapChain, nullptr);
+    }
+
     void cleanup() {
-        
+        cleanupSwapChain();
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
             vkDestroySemaphore(logicalDevice, renderFinishedSemaphores[i], nullptr);
             vkDestroySemaphore(logicalDevice, imageAvailableSemaphores[i], nullptr);
@@ -924,21 +971,13 @@ private:
         }
 
         vkDestroyCommandPool(logicalDevice, commandPool, nullptr);
-        for (auto framebuffer : swapChainFramebuffers) {
-            vkDestroyFramebuffer(logicalDevice, framebuffer, nullptr);
-        }
-        vkDestroyPipeline(logicalDevice, graphicsPipeline, nullptr);
-        vkDestroyPipelineLayout(logicalDevice, pipelineLayout, nullptr);
-        vkDestroyRenderPass(logicalDevice, renderPass, nullptr);
-        for (auto imageView : swapChainImageViews) {
-            vkDestroyImageView(logicalDevice, imageView, nullptr);
-        }
-        vkDestroySwapchainKHR(logicalDevice, swapChain, nullptr);
         vkDestroyDevice(logicalDevice, nullptr);
-        vkDestroySurfaceKHR(instance, surface, nullptr);
+
         if (enableValidationLayers) {
             Utils::DestroyDebugUtilsMessengerEXT(instance, debugMessenger, nullptr);
         }
+
+        vkDestroySurfaceKHR(instance, surface, nullptr);
         vkDestroyInstance(instance, nullptr);
         glfwDestroyWindow(window);
         glfwTerminate();
