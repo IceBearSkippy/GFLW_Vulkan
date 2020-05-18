@@ -3,8 +3,7 @@
 
 #define GLM_FORCE_RADIANS
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
-#include <glm/vec4.hpp>
-#include <glm/mat4x4.hpp>
+#include <glm/glm.hpp>
 
 #include <vulkan/vulkan.h>
 #include <vector>
@@ -15,6 +14,7 @@
 #include <map>
 #include <optional> //c++ 17 added optional
 #include <algorithm> 
+#include <array>
 
 #include "Utils.h"
 
@@ -34,6 +34,44 @@ const bool enableValidationLayers = false;
 #else
 const bool enableValidationLayers = true;
 #endif
+
+//Vertex data
+struct Vertex {
+    glm::vec2 pos;
+    glm::vec3 color;
+
+    // manage attribute binding per vertex
+    static VkVertexInputBindingDescription getBindingDescription() {
+        VkVertexInputBindingDescription bindingDescription{};
+        bindingDescription.binding = 0; // specifies the index of the binding in the array of bindings
+        bindingDescription.stride = sizeof(Vertex); // number of bytes from one entry to next
+        bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+        return bindingDescription;
+    }
+
+    static array<VkVertexInputAttributeDescription, 2> getAttributeDescriptions() {
+        array<VkVertexInputAttributeDescription, 2> attributeDescriptions{};
+        // we have two attributes: position and color (hence the size)
+        attributeDescriptions[0].binding = 0; // binding the per-vertex data
+        attributeDescriptions[0].location = 0; // location directive of the input in the vertex shader
+        attributeDescriptions[0].format = VK_FORMAT_R32G32_SFLOAT; // type of data (look at reference guide)
+        attributeDescriptions[0].offset = offsetof(Vertex, pos); // specifies the number of bytes since the start of the per-vertex data
+
+        attributeDescriptions[1].binding = 0;
+        attributeDescriptions[1].location = 1;
+        attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+        attributeDescriptions[1].offset = offsetof(Vertex, color);
+
+        return attributeDescriptions;
+    }
+};
+
+const vector<Vertex> vertices = {
+    {{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+    {{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
+    {{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
+};
 
 
 class HelloTriangleApplication {
@@ -61,6 +99,7 @@ private:
     VkPipeline graphicsPipeline;
     vector<VkFramebuffer> swapChainFramebuffers;
     VkCommandPool commandPool;
+    VkBuffer vertexBuffer;
     vector<VkCommandBuffer> commandBuffers;
     //semaphores
     vector<VkSemaphore> imageAvailableSemaphores;
@@ -97,6 +136,7 @@ private:
         createGraphicsPipeline();
         createFramebuffers();
         createCommandPool();
+        createVertexBuffer();
         createCommandBuffers();
         createSyncObjects();
     }
@@ -635,14 +675,18 @@ private:
 
 
         // create vertex input
+        auto bindingDescription = Vertex::getBindingDescription();
+        auto attributeDescriptions = Vertex::getAttributeDescriptions();
+
+
         VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
         vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-        vertexInputInfo.vertexBindingDescriptionCount = 0;
         // vertexBindingDescriptions point to an array of structs that describe loading vertex data
-        vertexInputInfo.pVertexBindingDescriptions = nullptr; // Optional 
-        vertexInputInfo.vertexAttributeDescriptionCount = 0;
+        vertexInputInfo.vertexBindingDescriptionCount = 1;
+        vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
+        vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
         // vertexAttributeDescriptions point to an array of structs that describe loading vertex data
-        vertexInputInfo.pVertexAttributeDescriptions = nullptr; // Optional
+        vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
 
         // create input assembly
         VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
@@ -842,6 +886,20 @@ private:
 
     }
 
+    void createVertexBuffer() {
+        VkBufferCreateInfo bufferInfo{};
+        bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        bufferInfo.size = sizeof(vertices[0]) * vertices.size(); //size of buffer in bytes
+        bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT; //purposes the data in the buffer
+        bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE; // buffer only used in graphics queue and not elsewhere
+        bufferInfo.flags = 0;
+
+        if (vkCreateBuffer(logicalDevice, &bufferInfo, nullptr, &vertexBuffer) != VK_SUCCESS) {
+            throw runtime_error("Failed to create vertex buffer!");
+        }
+
+    }
+
     void createCommandBuffers() {
         commandBuffers.resize(swapChainFramebuffers.size());
 
@@ -964,6 +1022,8 @@ private:
 
     void cleanup() {
         cleanupSwapChain();
+
+        vkDestroyBuffer(logicalDevice, vertexBuffer, nullptr); //does not depend on swap chain
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
             vkDestroySemaphore(logicalDevice, renderFinishedSemaphores[i], nullptr);
             vkDestroySemaphore(logicalDevice, imageAvailableSemaphores[i], nullptr);
