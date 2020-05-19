@@ -100,6 +100,7 @@ private:
     vector<VkFramebuffer> swapChainFramebuffers;
     VkCommandPool commandPool;
     VkBuffer vertexBuffer;
+    VkDeviceMemory vertexBufferMemory;
     vector<VkCommandBuffer> commandBuffers;
     //semaphores
     vector<VkSemaphore> imageAvailableSemaphores;
@@ -898,6 +899,43 @@ private:
             throw runtime_error("Failed to create vertex buffer!");
         }
 
+        // Buffer is created, but we need to assign memory to it
+        VkMemoryRequirements memRequirements;
+        vkGetBufferMemoryRequirements(logicalDevice, vertexBuffer, &memRequirements);
+
+        VkMemoryAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocInfo.allocationSize = memRequirements.size;
+        allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+            VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+        if (vkAllocateMemory(logicalDevice, &allocInfo, nullptr, &vertexBufferMemory) != VK_SUCCESS) {
+            throw runtime_error("Failed to allocate vertex buffer memory");
+        }
+        // fourth param is the offset within the region of memory
+        // if non-zero, then it is required to be divisible by memRequirements.alignment
+        vkBindBufferMemory(logicalDevice, vertexBuffer, vertexBufferMemory, 0);
+    }
+
+    uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
+        //query for properties
+        // memProperties has two arrays -- memoryTypes and memoryHeaps
+        // Heaps are distinct memory resources like VRAM and swap space in RAM when VRAM runs out
+        // Different types of memory exists within these heaps.
+        // We only concern ourselves with the type of memory and not heap
+
+        VkPhysicalDeviceMemoryProperties memProperties;
+        vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProperties);
+
+        for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
+            // is the corresponding bit set to 1
+            if ((typeFilter & (1 << i)) &&
+                (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
+                return i;
+            }
+        }
+        throw runtime_error("Failed to find suitible memory type!");
     }
 
     void createCommandBuffers() {
@@ -1024,6 +1062,7 @@ private:
         cleanupSwapChain();
 
         vkDestroyBuffer(logicalDevice, vertexBuffer, nullptr); //does not depend on swap chain
+        vkFreeMemory(logicalDevice, vertexBufferMemory, nullptr);
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
             vkDestroySemaphore(logicalDevice, renderFinishedSemaphores[i], nullptr);
             vkDestroySemaphore(logicalDevice, imageAvailableSemaphores[i], nullptr);
