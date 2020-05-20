@@ -68,7 +68,7 @@ struct Vertex {
 };
 
 const vector<Vertex> vertices = {
-    {{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+    {{0.0f, -0.5f}, {1.0f, 1.0f, 1.0f}},
     {{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
     {{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
 };
@@ -916,6 +916,16 @@ private:
         // fourth param is the offset within the region of memory
         // if non-zero, then it is required to be divisible by memRequirements.alignment
         vkBindBufferMemory(logicalDevice, vertexBuffer, vertexBufferMemory, 0);
+
+        // filing the vertex buffer
+        // could specify special vaule VK_WHOLE_SIZE to map all memory (3rd param)
+        // Caching can be an issue which can be fixed with vkFlushedMappedMemoryRanges
+        // after writing to mapped memory or use a memory heap that is host coherent
+        void* data;
+        vkMapMemory(logicalDevice, vertexBufferMemory, 0, bufferInfo.size, 0, &data);
+        memcpy(data, vertices.data(), (size_t) bufferInfo.size);
+        vkUnmapMemory(logicalDevice, vertexBufferMemory);
+
     }
 
     uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
@@ -1003,9 +1013,14 @@ private:
             //Basic Drawing Commands
             vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
-            //draw the triangle
+            //draw the triangle -- uses hardcoded vertices
             // cmdbuffer, vertexCount, instanceCount, firstVertex, firstInstance
-            vkCmdDraw(commandBuffers[i], 3, 1, 0, 0);
+            //vkCmdDraw(commandBuffers[i], 3, 1, 0, 0);
+            
+            VkBuffer vertexBuffers[] = { vertexBuffer };
+            VkDeviceSize offsets[] = { 0 };
+            vkCmdBindVertexBuffers(commandBuffers[i], 0, 1, vertexBuffers, offsets);
+            vkCmdDraw(commandBuffers[i], static_cast<uint32_t>(vertices.size()), 1, 0, 0);
             vkCmdEndRenderPass(commandBuffers[i]);
             if (vkEndCommandBuffer(commandBuffers[i]) != VK_SUCCESS) {
                 throw runtime_error("Failed to record command buffer!");
