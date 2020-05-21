@@ -888,44 +888,108 @@ private:
     }
 
     void createVertexBuffer() {
-        VkBufferCreateInfo bufferInfo{};
-        bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-        bufferInfo.size = sizeof(vertices[0]) * vertices.size(); //size of buffer in bytes
-        bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT; //purposes the data in the buffer
-        bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE; // buffer only used in graphics queue and not elsewhere
-        bufferInfo.flags = 0;
+        VkDeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
 
-        if (vkCreateBuffer(logicalDevice, &bufferInfo, nullptr, &vertexBuffer) != VK_SUCCESS) {
-            throw runtime_error("Failed to create vertex buffer!");
-        }
+        VkBuffer stagingBuffer;
+        VkDeviceMemory stagingBufferMemory;
+        // TRANSFER_SRC - source of transfer
+        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            stagingBuffer, stagingBufferMemory);
 
-        // Buffer is created, but we need to assign memory to it
-        VkMemoryRequirements memRequirements;
-        vkGetBufferMemoryRequirements(logicalDevice, vertexBuffer, &memRequirements);
 
-        VkMemoryAllocateInfo allocInfo{};
-        allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        allocInfo.allocationSize = memRequirements.size;
-        allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-            VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-
-        if (vkAllocateMemory(logicalDevice, &allocInfo, nullptr, &vertexBufferMemory) != VK_SUCCESS) {
-            throw runtime_error("Failed to allocate vertex buffer memory");
-        }
-        // fourth param is the offset within the region of memory
-        // if non-zero, then it is required to be divisible by memRequirements.alignment
-        vkBindBufferMemory(logicalDevice, vertexBuffer, vertexBufferMemory, 0);
-
-        // filing the vertex buffer
+        // filling the vertex buffer by first passing a staging buffer
         // could specify special vaule VK_WHOLE_SIZE to map all memory (3rd param)
         // Caching can be an issue which can be fixed with vkFlushedMappedMemoryRanges
         // after writing to mapped memory or use a memory heap that is host coherent
         void* data;
-        vkMapMemory(logicalDevice, vertexBufferMemory, 0, bufferInfo.size, 0, &data);
-        memcpy(data, vertices.data(), (size_t) bufferInfo.size);
-        vkUnmapMemory(logicalDevice, vertexBufferMemory);
+        vkMapMemory(logicalDevice, stagingBufferMemory, 0, bufferSize, 0, &data);
+        memcpy(data, vertices.data(), (size_t)bufferSize);
+        vkUnmapMemory(logicalDevice, stagingBufferMemory);
 
+        // TRANSFER_DST - transfer destination
+        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, vertexBuffer, vertexBufferMemory);
+
+        copyBuffer(stagingBuffer, vertexBuffer, bufferSize);
+
+        vkDestroyBuffer(logicalDevice, stagingBuffer, nullptr);
+        vkFreeMemory(logicalDevice, stagingBufferMemory, nullptr);
+    }
+
+    void copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size) {
+        // Memory transfer operations use command buffers --> we need a temp command buffer
+        // TODO: You might want to create a separate command pool for these short lived copy/transfers.
+        //       In that case, use VK_COMMAND_POOL_CREATE_TRANSIENT_BIT flag in command pool
+        VkCommandBufferAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        allocInfo.commandPool = commandPool;
+        allocInfo.commandBufferCount = 1;
+
+        VkCommandBuffer commandBuffer;
+        vkAllocateCommandBuffers(logicalDevice, &allocInfo, &commandBuffer);
+
+        VkCommandBufferBeginInfo beginInfo{};
+        beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT; // only using it once and wait returning
+        vkBeginCommandBuffer(commandBuffer, &beginInfo);
+
+        VkBufferCopy copyRegion{};
+        copyRegion.srcOffset = 0; //Optional
+        copyRegion.dstOffset = 0; //Optional
+        copyRegion.size = size;
+        vkCmdCopyBuffer(commandBuffer, srcBuffer, dstBuffer, 1, &copyRegion);
+        
+        // stop recording
+        vkEndCommandBuffer(commandBuffer);
+
+        // time to execute transfer
+        VkSubmitInfo submitInfo{};
+        submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        submitInfo.commandBufferCount = 1;
+        submitInfo.pCommandBuffers = &commandBuffer;
+
+        vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+
+        // We either could use a fence and wait with vkWaitForFences
+        // or vkQueueWaitIdle (one at a time)
+        vkQueueWaitIdle(graphicsQueue);
+
+        vkFreeCommandBuffers(logicalDevice, commandPool, 1, &commandBuffer);
+    }
+
+    void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties,
+        VkBuffer& buffer, VkDeviceMemory& bufferMemory) {
+
+        VkBufferCreateInfo bufferInfo{};
+        bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        bufferInfo.size = size; //size of buffer in bytes
+        bufferInfo.usage = usage; //purposes the data in the buffer
+        bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE; // buffer only used in graphics queue and not elsewhere
+        bufferInfo.flags = 0;
+
+        if (vkCreateBuffer(logicalDevice, &bufferInfo, nullptr, &buffer) != VK_SUCCESS) {
+            throw runtime_error("Failed to create buffer!");
+        }
+
+        // Buffer is created, but we need to assign memory to it
+        VkMemoryRequirements memRequirements;
+        vkGetBufferMemoryRequirements(logicalDevice, buffer, &memRequirements);
+
+        VkMemoryAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocInfo.allocationSize = memRequirements.size;
+        allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties);
+
+        // Real world you do not have to manually allocate individual buffer memory
+        // TODO: look into using VulkanMemoryAllocator library
+        if (vkAllocateMemory(logicalDevice, &allocInfo, nullptr, &bufferMemory) != VK_SUCCESS) {
+            throw runtime_error("Failed to allocate buffer memory!");
+        }
+        // fourth param is the offset within the region of memory
+        // if non-zero, then it is required to be divisible by memRequirements.alignment
+        vkBindBufferMemory(logicalDevice, buffer, bufferMemory, 0);
     }
 
     uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
