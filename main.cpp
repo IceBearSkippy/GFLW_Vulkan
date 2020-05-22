@@ -4,6 +4,9 @@
 #define GLM_FORCE_RADIANS
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+
+#include <chrono>
 
 #include <vulkan/vulkan.h>
 #include <vector>
@@ -34,6 +37,13 @@ const bool enableValidationLayers = false;
 #else
 const bool enableValidationLayers = true;
 #endif
+
+//UBO
+struct UniformBufferObject {
+    glm::mat4 model;
+    glm::mat4 view;
+    glm::mat4 proj;
+};
 
 //Vertex data
 struct Vertex {
@@ -100,6 +110,7 @@ private:
     VkExtent2D swapChainExtent;
     vector<VkImageView> swapChainImageViews;
     VkRenderPass renderPass;
+    VkDescriptorSetLayout descriptorSetLayout;
     VkPipelineLayout pipelineLayout;
     VkPipeline graphicsPipeline;
     vector<VkFramebuffer> swapChainFramebuffers;
@@ -108,6 +119,8 @@ private:
     VkDeviceMemory vertexBufferMemory;
     VkBuffer indexBuffer;
     VkDeviceMemory indexBufferMemory;
+    vector<VkBuffer> uniformBuffers;
+    vector<VkDeviceMemory> uniformBuffersMemory;
     vector<VkCommandBuffer> commandBuffers;
     //semaphores
     vector<VkSemaphore> imageAvailableSemaphores;
@@ -141,11 +154,13 @@ private:
         createSwapChain();
         createImageViews();
         createRenderPass();
+        createDescriptorSetLayout();
         createGraphicsPipeline();
         createFramebuffers();
         createCommandPool();
         createVertexBuffer();
         createIndexBuffer();
+        createUniformBuffers();
         createCommandBuffers();
         createSyncObjects();
     }
@@ -168,6 +183,7 @@ private:
         createRenderPass();
         createGraphicsPipeline();
         createFramebuffers();
+        createUniformBuffers();
         createCommandBuffers();
     }
 
@@ -197,6 +213,8 @@ private:
         }
         // Mark the image as now being in use by this frame
         imagesInFlight[imageIndex] = inFlightFences[currentFrame];
+
+        updateUniformBuffer(imageIndex);
 
         //Submitting the command buffer
         VkSubmitInfo submitInfo{};
@@ -258,6 +276,27 @@ private:
         currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
     }
 
+    void updateUniformBuffer(uint32_t currentImage) {
+        // Generate a new tranformation every frame (spin it around)
+        static auto startTime = chrono::high_resolution_clock::now();
+
+        auto currentTime = chrono::high_resolution_clock::now();
+        float time = chrono::duration<float, chrono::seconds::period>(currentTime - startTime).count();
+
+        UniformBufferObject ubo{};
+        ubo.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+        ubo.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+        ubo.proj = glm::perspective(glm::radians(45.0f), swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 10.0f);
+
+        // Flip the signs. Keep this to allow for inverted y coordinate system
+        ubo.proj[1][1] *= -1;
+
+        void* data;
+        vkMapMemory(logicalDevice, uniformBuffersMemory[currentImage], 0, sizeof(ubo), 0, &data);
+        memcpy(data, &ubo, sizeof(ubo));
+        vkUnmapMemory(logicalDevice, uniformBuffersMemory[currentImage]);
+
+    }
 
     void createInstance() {
         if (enableValidationLayers && !checkValidationLayerSupport()) {
@@ -654,6 +693,30 @@ private:
 
     }
 
+    void createDescriptorSetLayout() {
+        // Every binding needs to be described
+        // It is possible to specify an array and the count being the number of elements there
+        VkDescriptorSetLayoutBinding uboLayoutBinding{};
+        uboLayoutBinding.binding = 0;
+        uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        uboLayoutBinding.descriptorCount = 1;
+        // specify shader stage. If all -- STAGE_ALL_GRAPHICS
+        // but here we're only referencing vertex shader
+        uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT; 
+        // Relevant for image sampling related descriptors
+        uboLayoutBinding.pImmutableSamplers = nullptr;
+
+        VkDescriptorSetLayoutCreateInfo layoutInfo{};
+        layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        layoutInfo.bindingCount = 1;
+        layoutInfo.pBindings = &uboLayoutBinding;
+
+        if (vkCreateDescriptorSetLayout(logicalDevice, &layoutInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS) {
+            throw runtime_error("Failed to create descriptor set layout!");
+        }
+
+    }
+
     void createGraphicsPipeline() {
         //TODO: refactor to compile inline for .vert and .frag as initial setup?
         auto vertShaderCode = Utils::readFile("shaders/vert.spv");
@@ -803,8 +866,8 @@ private:
         // create pipelineLayout
         VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
         pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-        pipelineLayoutInfo.setLayoutCount = 0; // optional
-        pipelineLayoutInfo.pSetLayouts = nullptr; // optional
+        pipelineLayoutInfo.setLayoutCount = 1; // setting descriptor layout for binding info
+        pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout;
         pipelineLayoutInfo.pushConstantRangeCount = 0; // optional
         pipelineLayoutInfo.pPushConstantRanges = nullptr;
         if (vkCreatePipelineLayout(logicalDevice, &pipelineLayoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS) {
@@ -1050,6 +1113,20 @@ private:
         throw runtime_error("Failed to find suitible memory type!");
     }
 
+    void createUniformBuffers() {
+        VkDeviceSize bufferSize = sizeof(UniformBufferObject);
+        uniformBuffers.resize(swapChainImages.size());
+        uniformBuffersMemory.resize(swapChainImages.size());
+
+        for (size_t i = 0; i < swapChainImages.size(); i++) {
+            createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, uniformBuffers[i],
+                uniformBuffersMemory[i]);
+        }
+
+    }
+
     void createCommandBuffers() {
         commandBuffers.resize(swapChainFramebuffers.size());
 
@@ -1168,7 +1245,10 @@ private:
         for (size_t i = 0; i < swapChainFramebuffers.size(); i++) {
             vkDestroyFramebuffer(logicalDevice, swapChainFramebuffers[i], nullptr);
         }
-
+        for (size_t i = 0; i < swapChainImages.size(); i++) {
+            vkDestroyBuffer(logicalDevice, uniformBuffers[i], nullptr);
+            vkFreeMemory(logicalDevice, uniformBuffersMemory[i], nullptr);
+        }
         vkFreeCommandBuffers(logicalDevice, commandPool, static_cast<uint32_t>(commandBuffers.size()),
             commandBuffers.data());
         vkDestroyPipeline(logicalDevice, graphicsPipeline, nullptr);
@@ -1182,6 +1262,8 @@ private:
 
     void cleanup() {
         cleanupSwapChain();
+
+        vkDestroyDescriptorSetLayout(logicalDevice, descriptorSetLayout, nullptr);
 
         vkDestroyBuffer(logicalDevice, indexBuffer, nullptr); //does not depend on swap chain
         vkFreeMemory(logicalDevice, indexBufferMemory, nullptr);
