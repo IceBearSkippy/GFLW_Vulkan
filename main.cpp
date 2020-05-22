@@ -1,5 +1,6 @@
 #define GLFW_INCLUDE_VULKAN
-#include <GLFW/glfw3.h>
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtx/string_cast.hpp>
 
 #define GLM_FORCE_RADIANS
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
@@ -121,6 +122,8 @@ private:
     VkDeviceMemory indexBufferMemory;
     vector<VkBuffer> uniformBuffers;
     vector<VkDeviceMemory> uniformBuffersMemory;
+    VkDescriptorPool descriptorPool;
+    vector<VkDescriptorSet> descriptorSets;
     vector<VkCommandBuffer> commandBuffers;
     //semaphores
     vector<VkSemaphore> imageAvailableSemaphores;
@@ -161,6 +164,8 @@ private:
         createVertexBuffer();
         createIndexBuffer();
         createUniformBuffers();
+        createDescriptorPool();
+        createDescriptorSets();
         createCommandBuffers();
         createSyncObjects();
     }
@@ -184,6 +189,8 @@ private:
         createGraphicsPipeline();
         createFramebuffers();
         createUniformBuffers();
+        createDescriptorPool();
+        createDescriptorSets();
         createCommandBuffers();
     }
 
@@ -805,7 +812,7 @@ private:
         // thickness of line. Thicker than 1.0f requires wideLines GPU feature
         rasterizer.lineWidth = 1.0f;
         rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
-        rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+        rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
         rasterizer.depthBiasEnable = VK_FALSE;
         rasterizer.depthBiasConstantFactor = 0.0f; // optional
         rasterizer.depthBiasClamp = 0.0f; // optional
@@ -1127,6 +1134,69 @@ private:
 
     }
 
+    void createDescriptorPool() {
+        // describe descriptor types our sets are going to contain
+        VkDescriptorPoolSize poolSize{};
+        poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        poolSize.descriptorCount = static_cast<uint32_t>(swapChainImages.size());
+
+        VkDescriptorPoolCreateInfo poolInfo{};
+        poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        poolInfo.poolSizeCount = 1;
+        poolInfo.pPoolSizes = &poolSize;
+        poolInfo.maxSets = static_cast<uint32_t>(swapChainImages.size());
+        // structure has optional flag to determine individual descriptor sets
+        // can be freed or not: VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT
+        poolInfo.flags = 0;
+
+        if (vkCreateDescriptorPool(logicalDevice, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS) {
+            throw runtime_error("Failed to create descriptor pool!");
+        }
+    }
+
+    void createDescriptorSets() {
+        // We'll create descriptor set for each swap chain image
+        vector<VkDescriptorSetLayout> layouts(swapChainImages.size(), descriptorSetLayout);
+
+        VkDescriptorSetAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        allocInfo.descriptorPool = descriptorPool;
+        allocInfo.descriptorSetCount = static_cast<uint32_t>(swapChainImages.size());
+        allocInfo.pSetLayouts = layouts.data();
+
+        descriptorSets.resize(swapChainImages.size());
+        if (vkAllocateDescriptorSets(logicalDevice, &allocInfo, descriptorSets.data()) != VK_SUCCESS) {
+            throw runtime_error("Failed to allocated descriptor sets!");
+        }
+
+        // descriptor sets need to be configured
+        for (size_t i = 0; i < swapChainImages.size(); i++) {
+            VkDescriptorBufferInfo bufferInfo{};
+            bufferInfo.buffer = uniformBuffers[i];
+            bufferInfo.offset = 0;
+            bufferInfo.range = sizeof(UniformBufferObject);
+
+            VkWriteDescriptorSet descriptorWrite{};
+            descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            descriptorWrite.dstSet = descriptorSets[i];
+            descriptorWrite.dstBinding = 0;
+            descriptorWrite.dstArrayElement = 0; // we're not using an array
+            // Have to specify type again -- possible to update multiple descriptorts
+            // at once in an array
+            // count is how many array elements you want to update
+            descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            descriptorWrite.descriptorCount = 1;
+
+
+            descriptorWrite.pBufferInfo = &bufferInfo;
+            descriptorWrite.pImageInfo = nullptr; // Optional -- refer to image data
+            descriptorWrite.pTexelBufferView = nullptr; // Optional -- refer to buffer views
+
+            vkUpdateDescriptorSets(logicalDevice, 1, &descriptorWrite, 0, nullptr);
+        }
+
+    }
+
     void createCommandBuffers() {
         commandBuffers.resize(swapChainFramebuffers.size());
 
@@ -1201,6 +1271,11 @@ private:
             vkCmdBindVertexBuffers(commandBuffers[i], 0, 1, vertexBuffers, offsets);
 
             vkCmdBindIndexBuffer(commandBuffers[i], indexBuffer, 0, VK_INDEX_TYPE_UINT16); //change to 32 if large amt of indices 
+            
+            //Bind descriptor sets
+            vkCmdBindDescriptorSets(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1,
+                &descriptorSets[i], 0, nullptr);
+
             //vkCmdDraw(commandBuffers[i], static_cast<uint32_t>(vertices.size()), 1, 0, 0);
             // 1 number of instance, offset into index buffer, offset to add to indices in the buffer, offset for instancing
             vkCmdDrawIndexed(commandBuffers[i], static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
@@ -1249,6 +1324,7 @@ private:
             vkDestroyBuffer(logicalDevice, uniformBuffers[i], nullptr);
             vkFreeMemory(logicalDevice, uniformBuffersMemory[i], nullptr);
         }
+        vkDestroyDescriptorPool(logicalDevice, descriptorPool, nullptr);
         vkFreeCommandBuffers(logicalDevice, commandPool, static_cast<uint32_t>(commandBuffers.size()),
             commandBuffers.data());
         vkDestroyPipeline(logicalDevice, graphicsPipeline, nullptr);
