@@ -68,11 +68,16 @@ struct Vertex {
 };
 
 const vector<Vertex> vertices = {
-    {{0.0f, -0.5f}, {1.0f, 1.0f, 1.0f}},
-    {{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
-    {{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
+    {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+    {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
+    {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
+    {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}}
 };
 
+// can use uint32_t if a lot of vertices
+const vector<uint16_t> indices = {
+    0, 1, 2, 2, 3, 0
+};
 
 class HelloTriangleApplication {
 public:
@@ -101,6 +106,8 @@ private:
     VkCommandPool commandPool;
     VkBuffer vertexBuffer;
     VkDeviceMemory vertexBufferMemory;
+    VkBuffer indexBuffer;
+    VkDeviceMemory indexBufferMemory;
     vector<VkCommandBuffer> commandBuffers;
     //semaphores
     vector<VkSemaphore> imageAvailableSemaphores;
@@ -138,6 +145,7 @@ private:
         createFramebuffers();
         createCommandPool();
         createVertexBuffer();
+        createIndexBuffer();
         createCommandBuffers();
         createSyncObjects();
     }
@@ -917,6 +925,36 @@ private:
         vkFreeMemory(logicalDevice, stagingBufferMemory, nullptr);
     }
 
+    void createIndexBuffer() {
+        VkDeviceSize bufferSize = sizeof(indices[0]) * indices.size();
+
+        VkBuffer stagingBuffer;
+        VkDeviceMemory stagingBufferMemory;
+        // TRANSFER_SRC - source of transfer
+        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            stagingBuffer, stagingBufferMemory);
+
+
+        // filling the vertex buffer by first passing a staging buffer
+        // could specify special vaule VK_WHOLE_SIZE to map all memory (3rd param)
+        // Caching can be an issue which can be fixed with vkFlushedMappedMemoryRanges
+        // after writing to mapped memory or use a memory heap that is host coherent
+        void* data;
+        vkMapMemory(logicalDevice, stagingBufferMemory, 0, bufferSize, 0, &data);
+        memcpy(data, indices.data(), (size_t)bufferSize);
+        vkUnmapMemory(logicalDevice, stagingBufferMemory);
+
+        // TRANSFER_DST - transfer destination
+        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, indexBuffer, indexBufferMemory);
+
+        copyBuffer(stagingBuffer, indexBuffer, bufferSize);
+
+        vkDestroyBuffer(logicalDevice, stagingBuffer, nullptr);
+        vkFreeMemory(logicalDevice, stagingBufferMemory, nullptr);
+    }
+
     void copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size) {
         // Memory transfer operations use command buffers --> we need a temp command buffer
         // TODO: You might want to create a separate command pool for these short lived copy/transfers.
@@ -1084,7 +1122,12 @@ private:
             VkBuffer vertexBuffers[] = { vertexBuffer };
             VkDeviceSize offsets[] = { 0 };
             vkCmdBindVertexBuffers(commandBuffers[i], 0, 1, vertexBuffers, offsets);
-            vkCmdDraw(commandBuffers[i], static_cast<uint32_t>(vertices.size()), 1, 0, 0);
+
+            vkCmdBindIndexBuffer(commandBuffers[i], indexBuffer, 0, VK_INDEX_TYPE_UINT16); //change to 32 if large amt of indices 
+            //vkCmdDraw(commandBuffers[i], static_cast<uint32_t>(vertices.size()), 1, 0, 0);
+            // 1 number of instance, offset into index buffer, offset to add to indices in the buffer, offset for instancing
+            vkCmdDrawIndexed(commandBuffers[i], static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
+
             vkCmdEndRenderPass(commandBuffers[i]);
             if (vkEndCommandBuffer(commandBuffers[i]) != VK_SUCCESS) {
                 throw runtime_error("Failed to record command buffer!");
@@ -1139,6 +1182,9 @@ private:
 
     void cleanup() {
         cleanupSwapChain();
+
+        vkDestroyBuffer(logicalDevice, indexBuffer, nullptr); //does not depend on swap chain
+        vkFreeMemory(logicalDevice, indexBufferMemory, nullptr);
 
         vkDestroyBuffer(logicalDevice, vertexBuffer, nullptr); //does not depend on swap chain
         vkFreeMemory(logicalDevice, vertexBufferMemory, nullptr);
