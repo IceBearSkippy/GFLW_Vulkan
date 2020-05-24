@@ -125,6 +125,7 @@ private:
     VkCommandPool commandPool;
     VkImage textureImage;
     VkDeviceMemory textureImageMemory;
+    VkImageView textureImageView;
     VkBuffer vertexBuffer;
     VkDeviceMemory vertexBufferMemory;
     VkBuffer indexBuffer;
@@ -171,6 +172,8 @@ private:
         createFramebuffers();
         createCommandPool();
         createTextureImage();
+        createTextureImageView();
+        createTextureSampler();
         createVertexBuffer();
         createIndexBuffer();
         createUniformBuffers();
@@ -609,32 +612,7 @@ private:
         swapChainImageViews.resize(swapChainImages.size());
 
         for (size_t i = 0; i < swapChainImages.size(); i++) {
-            VkImageViewCreateInfo createInfo{};
-            createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-            createInfo.image = swapChainImages[i];
-
-            // viewtype -- treat images as 1D, 2D, 3D Textures and cube maps
-            // format -- the swap chain image format
-            createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-            createInfo.format = swapChainImageFormat;
-
-            // components -- change color channels around
-            createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
-            createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-            createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
-            createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
-
-            // subresourceRange -- describes image purpose and which part should be accessed
-            // would specify mipmapping/layers here
-            createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-            createInfo.subresourceRange.baseMipLevel = 0;
-            createInfo.subresourceRange.levelCount = 1;
-            createInfo.subresourceRange.baseArrayLayer = 0;
-            createInfo.subresourceRange.layerCount = 1;
-
-            if (vkCreateImageView(logicalDevice, &createInfo, nullptr, &swapChainImageViews[i]) != VK_SUCCESS) {
-                throw runtime_error("Failed to create image views!");
-            }
+            swapChainImageViews[i] = createImageView(swapChainImages[i], swapChainImageFormat);
         }
     }
 
@@ -1006,17 +984,14 @@ private:
         // image layout to transfer (pipeline barrier)
         transitionImageLayout(textureImage, VK_FORMAT_R8G8B8A8_SRGB,
             VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-        //copy to buffer
+        //copy to staging buffer
         copyBufferToImage(stagingBuffer, textureImage,
             static_cast<uint32_t>(texWidth),
             static_cast<uint32_t>(texHeight));
-        // image layout to shader
+        // prepare image for shader access
         transitionImageLayout(textureImage, VK_FORMAT_R8G8B8A8_SRGB,
             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 
             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-
-
-
 
         vkDestroyBuffer(logicalDevice, stagingBuffer, nullptr);
         vkFreeMemory(logicalDevice, stagingBufferMemory, nullptr);
@@ -1142,6 +1117,42 @@ private:
         );
 
         endSingleTimeCommands(commandBuffer);
+    }
+
+    void createTextureImageView() {
+
+        textureImageView = createImageView(textureImage, VK_FORMAT_R8G8B8A8_SRGB);
+    }
+
+    VkImageView createImageView(VkImage image, VkFormat format) {
+        // helper function
+        VkImageViewCreateInfo viewInfo{};
+        viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        viewInfo.image = image;
+        viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        viewInfo.format = format;
+        viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        viewInfo.subresourceRange.baseMipLevel = 0;
+        viewInfo.subresourceRange.levelCount = 1;
+        viewInfo.subresourceRange.baseArrayLayer = 0;
+        viewInfo.subresourceRange.layerCount = 1;
+        // viewInfo.components initialization is 0 (default) because VK_COMPONENT_SWIZZLE_IDENTITY
+
+        VkImageView imageView;
+        if (vkCreateImageView(logicalDevice, &viewInfo, nullptr, &imageView) != VK_SUCCESS) {
+            throw runtime_error("Failed to create texture image view!");
+        }
+        return imageView;
+    }
+
+    void createTextureSampler() {
+        VkSamplerCreateInfo samplerInfo{};
+        samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        // specify how to interpolate texels
+        samplerInfo.magFilter = VK_FILTER_LINEAR;
+        samplerInfo.minFilter = VK_FILTER_LINEAR;
+        // TODO: currently on sampler buffer (page 222)
+
     }
 
     void createVertexBuffer() {
@@ -1527,6 +1538,8 @@ private:
 
     void cleanup() {
         cleanupSwapChain();
+
+        vkDestroyImageView(logicalDevice, textureImageView, nullptr);
 
         vkDestroyImage(logicalDevice, textureImage, nullptr);
         vkFreeMemory(logicalDevice, textureImageMemory, nullptr);
