@@ -11,6 +11,9 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+#define TINYOBJLOADER_IMPLEMENTATION
+#include <tiny_obj_loader.h>
+
 #include <chrono>
 
 #include <vulkan/vulkan.h>
@@ -33,6 +36,10 @@ using namespace std;
 
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
+
+const string MODEL_PATH = "models/viking_room.obj";
+const string TEXTURE_PATH = "models/viking_room.png";
+
 GLFWwindow* window;
 VkSurfaceKHR surface;
 
@@ -91,24 +98,6 @@ struct Vertex {
     }
 };
 
-const vector<Vertex> vertices = {
-    {{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
-    {{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
-    {{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
-    {{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}},
-
-    {{-0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
-    {{0.5f, -0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
-    {{0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
-    {{-0.5f, 0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}}
-};
-
-// can use uint32_t if a lot of vertices
-const vector<uint16_t> indices = {
-    0, 1, 2, 2, 3, 0,
-    4, 5, 6, 6, 7, 4
-};
-
 class HelloTriangleApplication {
 public:
     void run() {
@@ -142,6 +131,8 @@ private:
     VkDeviceMemory textureImageMemory;
     VkImageView textureImageView;
     VkSampler textureSampler;
+    vector<Vertex> vertices;
+    vector<uint32_t> indices;
     VkBuffer vertexBuffer;
     VkDeviceMemory vertexBufferMemory;
     VkBuffer indexBuffer;
@@ -191,6 +182,7 @@ private:
         createTextureImage();
         createTextureImageView();
         createTextureSampler();
+        loadModel();
         createVertexBuffer();
         createIndexBuffer();
         createUniformBuffers();
@@ -1044,7 +1036,8 @@ private:
 
     void createTextureImage() {
         int texWidth, texHeight, texChannels;
-        stbi_uc* pixels = stbi_load("textures/dopefish.jpg", &texWidth,
+        //now loading viking room texture
+        stbi_uc* pixels = stbi_load(TEXTURE_PATH.c_str(), &texWidth,
             &texHeight, &texChannels, STBI_rgb_alpha);
         VkDeviceSize imageSize = texWidth * texHeight * 4;
 
@@ -1284,6 +1277,47 @@ private:
         if (vkCreateSampler(logicalDevice, &samplerInfo, nullptr, &textureSampler) != VK_SUCCESS) {
             throw runtime_error("Failed to create texture sampler!");
         }
+    }
+
+    void loadModel() {
+        tinyobj::attrib_t attrib;
+        vector<tinyobj::shape_t> shapes;
+        vector<tinyobj::material_t> materials;
+        string warn, err;
+
+        if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, MODEL_PATH.c_str())) {
+            throw runtime_error(warn + err);
+        }
+
+        // attrib container holds pos, norms and tex coords
+        // shapes container has all seperate objects and faces
+        // in our case, we are ignoring material/texture per face
+
+        //combine all faces in the file into a single model
+        for (const auto& shape : shapes) {
+            for (const auto& index : shape.mesh.indices) {
+                Vertex vertex{};
+
+                vertices.push_back(vertex);
+                indices.push_back(indices.size());
+
+                vertex.pos = {
+                    attrib.vertices[3 * index.vertex_index + 0],
+                    attrib.vertices[3 * index.vertex_index + 1],
+                    attrib.vertices[3 * index.vertex_index + 2]
+                };
+
+                vertex.texCoord = {
+                    attrib.texcoords[2 * index.texcoord_index + 0],
+                    attrib.texcoords[2 * index.texcoord_index + 1]
+                };
+
+                vertex.color = { 0.5f, 1.0f, 0.5f };
+
+                //TODO fix texture and export obj correctly in blender
+            }
+        }
+
     }
 
     void createVertexBuffer() {
@@ -1619,7 +1653,7 @@ private:
             VkDeviceSize offsets[] = { 0 };
             vkCmdBindVertexBuffers(commandBuffers[i], 0, 1, vertexBuffers, offsets);
 
-            vkCmdBindIndexBuffer(commandBuffers[i], indexBuffer, 0, VK_INDEX_TYPE_UINT16); //change to 32 if large amt of indices 
+            vkCmdBindIndexBuffer(commandBuffers[i], indexBuffer, 0, VK_INDEX_TYPE_UINT32);
             
             //Bind descriptor sets
             vkCmdBindDescriptorSets(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1,
@@ -1634,8 +1668,6 @@ private:
                 throw runtime_error("Failed to record command buffer!");
             }
         }
-
-
     }
 
     void createSyncObjects() {
