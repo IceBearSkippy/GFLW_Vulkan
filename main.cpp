@@ -5,7 +5,7 @@
 // allows us to avoid using alignas
 #define GLM_FORCE_DEFAULT_ALIGNED_GENTYPES
 #define GLM_ENABLE_EXPERIMENTAL
-
+#include <glm/gtx/hash.hpp>
 #include <glm/gtx/string_cast.hpp>
 
 #include <glm/glm.hpp>
@@ -23,6 +23,7 @@
 #include <cstdlib> //EXIT_FAILURE/EXIT_SUCCESS macros
 #include <cstdint> //Necessary for UINT32_MAX
 #include <map>
+#include <unordered_map>
 #include <optional> //c++ 17 added optional
 #include <algorithm> 
 #include <array>
@@ -96,7 +97,24 @@ struct Vertex {
 
         return attributeDescriptions;
     }
+
+    //using Vertex struct as key in a hash table requires implementation
+    bool operator==(const Vertex& other) const {
+        return pos == other.pos && color == other.color && texCoord == other.texCoord;
+    }
 };
+
+// hash function for Vertex
+namespace std {
+    template<> struct hash<Vertex> {
+        size_t operator()(Vertex const& vertex) const {
+            return ((hash<glm::vec3>()(vertex.pos) ^
+                (hash<glm::vec3>()(vertex.color) << 1)) >> 1) ^
+                (hash<glm::vec2>()(vertex.texCoord) << 1);
+        }
+    };
+}
+
 
 class HelloTriangleApplication {
 public:
@@ -132,6 +150,7 @@ private:
     VkImageView textureImageView;
     VkSampler textureSampler;
     vector<Vertex> vertices;
+    unordered_map<Vertex, uint32_t> uniqueVertices;
     vector<uint32_t> indices;
     VkBuffer vertexBuffer;
     VkDeviceMemory vertexBufferMemory;
@@ -1304,15 +1323,19 @@ private:
                     attrib.vertices[3 * index.vertex_index + 2]
                 };
 
+                // obj format assumes coord system where a vertical (y) coordinate of 0 
+                // means bottom of the image
                 vertex.texCoord = {
                     attrib.texcoords[2 * index.texcoord_index + 0],
                     1.0f - attrib.texcoords[2 * index.texcoord_index + 1]
                 };
 
                 vertex.color = { 1.0f, 1.0f, 1.0f };
-
-                vertices.push_back(vertex);
-                indices.push_back(indices.size());
+                if (uniqueVertices.count(vertex) == 0) {
+                    uniqueVertices[vertex] = static_cast<uint32_t>(vertices.size());
+                    vertices.push_back(vertex);
+                }
+                indices.push_back(uniqueVertices[vertex]);
             }
         }
 
