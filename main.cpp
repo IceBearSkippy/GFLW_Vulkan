@@ -38,7 +38,7 @@ const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
 
 const string MODEL_PATH = "models/viking_room.obj";
-const string TEXTURE_PATH = "models/viking_room.png";
+const string TEXTURE_PATH = "textures/viking_room.png";
 
 GLFWwindow* window;
 VkSurfaceKHR surface;
@@ -1298,9 +1298,6 @@ private:
             for (const auto& index : shape.mesh.indices) {
                 Vertex vertex{};
 
-                vertices.push_back(vertex);
-                indices.push_back(indices.size());
-
                 vertex.pos = {
                     attrib.vertices[3 * index.vertex_index + 0],
                     attrib.vertices[3 * index.vertex_index + 1],
@@ -1309,12 +1306,13 @@ private:
 
                 vertex.texCoord = {
                     attrib.texcoords[2 * index.texcoord_index + 0],
-                    attrib.texcoords[2 * index.texcoord_index + 1]
+                    1.0f - attrib.texcoords[2 * index.texcoord_index + 1]
                 };
 
-                vertex.color = { 0.5f, 1.0f, 0.5f };
+                vertex.color = { 1.0f, 1.0f, 1.0f };
 
-                //TODO fix texture and export obj correctly in blender
+                vertices.push_back(vertex);
+                indices.push_back(indices.size());
             }
         }
 
